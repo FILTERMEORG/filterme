@@ -1,0 +1,40 @@
+{
+  "manifest_version": 3,
+  "name": "FILTERME (Local Test)",
+  "version": "0.3.0",
+  "description": "AI 기반 개인화 라이브 채팅 필터 - 로컬 테스트용 데모 (키워드 기반 임시 분류기, 백엔드 없음)",
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "FILTERME 전체 필터 설정",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "permissions": ["storage"],
+  "host_permissions": ["https://www.youtube.com/*"],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.youtube.com/live_chat*",
+        "https://www.youtube.com/live_chat_replay*"
+      ],
+      "all_frames": true,
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["popup.html", "popup.js", "popup.css"],
+      "matches": ["https://www.youtube.com/*"]
+    }
+  ]
+}
+

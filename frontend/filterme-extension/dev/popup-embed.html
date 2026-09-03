@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<title>popup embed (dev)</title>
+</head>
+<body>
+  <!--
+    이 파일은 실제 확장 프로그램에는 없는, 로컬 미리보기 전용 래퍼입니다.
+    content.js가 chrome.runtime.getURL('popup.html')로 iframe을 열 때,
+    진짜 popup.html을 열기 전에 chrome-mock.js가 먼저 로드되도록 순서를 보장합니다.
+    (그냥 popup.html을 바로 열면 window.chrome이 없어서 popup.js가 에러를 냅니다)
+  -->
+  <script src="chrome-mock.js"></script>
+  <script>
+    fetch('../popup.html')
+      .then((r) => r.text())
+      .then((html) => {
+        const bodyMatch = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+        let bodyHtml = bodyMatch ? bodyMatch[1] : html;
+        bodyHtml = bodyHtml.replace(/<script[^>]*src=["'][^"']*popup\.js["'][^>]*><\/script>/i, '');
+        document.body.innerHTML = bodyHtml;
+
+        const link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = '../popup.css';
+        document.head.appendChild(link);
+
+        const script = document.createElement('script');
+        script.src = '../popup.js';
+        document.body.appendChild(script);
+      })
+      .catch((err) => {
+        document.body.innerHTML =
+          '<div style="padding:14px;font-size:12px;color:#B91C1C;font-family:sans-serif;">popup.html을 불러오지 못했습니다: ' +
+          err.message +
+          '</div>';
+      });
+  </script>
+</body>
+</html>

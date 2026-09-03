@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="ko">
+<!--
+  이 페이지는 두 군데에서 재사용됩니다.
+  1) 브라우저 툴바 아이콘을 클릭했을 때 (manifest.json의 action.default_popup)
+  2) content.js가 채팅 안 플로팅 버튼을 눌렀을 때 여는 인페이지 모달 안의 <iframe> (v0.3.0~)
+  두 경우 모두 완전히 같은 파일이라, 설정 화면을 고칠 때 이 파일 하나만 수정하면 됩니다.
+-->
+<head>
+<meta charset="UTF-8" />
+<title>FILTERME</title>
+<link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <div class="tp-tabs">
+    <div class="tp-tab active" data-tp="mychat">My Chat</div>
+    <div class="tp-tab" data-tp="filter">Filter</div>
+    <div class="tp-tab" data-tp="settings">Settings</div>
+  </div>
+
+  <div class="tp-body">
+    <div class="tp-panel active" id="tp-mychat">
+      <span class="tp-chip" id="chipFilterState"><span class="d"></span>AI 필터 ON</span>
+      <div class="tp-sublabel">필터링된 메시지 표시 방식</div>
+      <div class="mode-toggle" id="modeToggle">
+        <div class="mode-opt blur active" data-mode="blur"><span class="d"></span>블러</div>
+        <div class="mode-opt block" data-mode="block"><span class="d"></span>차단</div>
+      </div>
+      <p class="tp-note">채팅 페이지를 열어두면 유튜브 라이브 채팅에 바로 반영됩니다.</p>
+    </div>
+
+    <div class="tp-panel" id="tp-filter">
+      <div class="tp-row">
+        <div><div class="l">C02 · 욕설 / 비속어</div><div class="d">Profanity</div></div>
+        <div class="mini-switch on" data-cat="c02"></div>
+      </div>
+      <div class="tp-row">
+        <div><div class="l">C03 · 정치 관련 대화</div><div class="d">Political</div></div>
+        <div class="mini-switch on" data-cat="c03"></div>
+      </div>
+      <div class="tp-row">
+        <div><div class="l">C04 · 성적 표현</div><div class="d">Sexual</div></div>
+        <div class="mini-switch on" data-cat="c04"></div>
+      </div>
+      <div class="tp-row">
+        <div><div class="l">C05 · 도배 / 반복</div><div class="d">Spam</div></div>
+        <div class="mini-switch on" data-cat="c05"></div>
+      </div>
+    </div>
+
+    <div class="tp-panel" id="tp-settings">
+      <div class="tp-sublabel">필터 상태</div>
+      <div class="tp-row">
+        <div><div class="l">FILTERME 켜기</div><div class="d">라이브 채팅에 필터를 적용해요</div></div>
+        <div class="mini-switch on" id="filterEnabledSwitch"></div>
+      </div>
+      <div class="tp-sublabel">플랫폼</div>
+      <div class="platform-seg">
+        <button class="on">YouTube</button>
+      </div>
+      <div class="privacy-note">채팅 기록은 저장하지 않습니다. 필터 기준만 이 브라우저에 저장돼요.</div>
+      <button class="reset-btn" id="resetOnboard">온보딩 다시 보기 (테스트용)</button>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

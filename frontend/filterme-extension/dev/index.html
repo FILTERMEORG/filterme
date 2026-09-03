@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<title>FILTERME · 로컬 미리보기</title>
+<style>
+  body {
+    font-family: -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+    margin: 0; padding: 28px; background: #F3F4F6; color: #111827;
+  }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .sub { color: #6B7280; font-size: 13px; margin-bottom: 18px; line-height: 1.7; }
+  .sub code { background: #E5E7EB; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+
+  .controls { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 22px; }
+  .controls button {
+    font-size: 12px; padding: 7px 12px; border: 1px solid #E5E7EB; border-radius: 8px;
+    background: #fff; cursor: pointer;
+  }
+  .controls button:hover { background: #F3F4F6; }
+  .controls button.danger { color: #B91C1C; border-color: #FCA5A5; }
+
+  .layout { display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap; }
+  .box {
+    background: #fff; border: 1px solid #E5E7EB; border-radius: 10px; overflow: hidden;
+    box-shadow: 0 8px 24px -8px rgba(17,24,39,.12);
+  }
+  .box .label {
+    font-size: 11px; color: #6B7280; padding: 7px 10px; background: #F9FAFB; border-bottom: 1px solid #E5E7EB;
+  }
+  iframe#chatFrame { width: 400px; height: 640px; border: none; display: block; }
+  #popup-mock-root { width: 300px; }
+</style>
+</head>
+<body>
+  <h1>FILTERME · 로컬 미리보기</h1>
+  <p class="sub">
+    <code>content.js</code>, <code>popup.html/js</code>를 수정 없이 그대로 불러와서 렌더링합니다.<br>
+    VS Code의 <b>Live Server</b> 확장으로 이 파일을 열면, 코드 저장 시 자동으로 새로고침됩니다.
+  </p>
+
+  <div class="controls">
+    <button data-add="normal">💬 일반 메시지 추가</button>
+    <button data-add="c02">🤬 욕설 메시지 추가</button>
+    <button data-add="c03">🏛 정치 메시지 추가</button>
+    <button data-add="c05">🔁 도배 메시지 추가 (3연속)</button>
+    <button class="danger" id="resetBtn">🗑 저장된 설정 초기화</button>
+  </div>
+
+  <div class="layout">
+    <div class="box">
+      <div class="label">네이티브 유튜브 채팅 (모의) — content.js 그대로 실행</div>
+      <iframe id="chatFrame" src="mock-chat.html"></iframe>
+    </div>
+
+    <div class="box">
+      <div class="label">브라우저 툴바 팝업 (모의) — popup.html 그대로 렌더링</div>
+      <div id="popup-mock-root"></div>
+    </div>
+  </div>
+
+  <script src="chrome-mock.js"></script>
+  <script>
+    const SAMPLES = {
+      normal: ['오늘 방송 재밌어요!', '이 노래 제목이 뭐예요?', '구독했습니다!'],
+      c02: ['저 새끼 뭐라는거야', 'ㅅㅂ 진짜 어이없네'],
+      c03: ['이번 정부 정책 실화냐', '국회의원들 다 똑같아']
+    };
+    const sampleIdx = { normal: 0, c02: 0, c03: 0 };
+
+    document.querySelectorAll('[data-add]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const win = document.getElementById('chatFrame').contentWindow;
+        if (!win || !win.addMockMessage) return;
+        const kind = btn.dataset.add;
+        if (kind === 'c05') {
+          for (let i = 0; i < 3; i++) {
+            win.addMockMessage('user' + Math.floor(Math.random() * 100), 'ㅋㅋㅋㅋㅋㅋㅋㅋㅋㅋ');
+          }
+          return;
+        }
+        const list = SAMPLES[kind];
+        const text = list[sampleIdx[kind] % list.length];
+        sampleIdx[kind]++;
+        win.addMockMessage('user' + Math.floor(Math.random() * 100), text);
+      });
+    });
+
+    document.getElementById('resetBtn').addEventListener('click', () => {
+      window.__filtermeDevReset();
+      document.getElementById('chatFrame').contentWindow.location.reload();
+      location.reload();
+    });
+
+    // popup.html의 <body> 내용을 그대로 가져와 인라인으로 렌더링합니다.
+    // (iframe 대신 이 방식을 쓰는 이유: popup.js를 우리가 원하는 타이밍에 넣을 수 있어서
+    //  chrome-mock.js가 먼저 준비된 뒤에 popup.js가 실행되도록 순서를 보장할 수 있습니다)
+    fetch('../popup.html')
+      .then((r) => r.text())
+      .then((html) => {
+        const bodyMatch = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+        let bodyHtml = bodyMatch ? bodyMatch[1] : html;
+        bodyHtml = bodyHtml.replace(/<script[^>]*src=["'][^"']*popup\.js["'][^>]*><\/script>/i, '');
+        document.getElementById('popup-mock-root').innerHTML = bodyHtml;
+
+        const link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = '../popup.css';
+        document.head.appendChild(link);
+
+        const script = document.createElement('script');
+        script.src = '../popup.js';
+        document.body.appendChild(script);
+      })
+      .catch((err) => {
+        document.getElementById('popup-mock-root').innerHTML =
+          '<div style="padding:14px;font-size:12px;color:#B91C1C;">popup.html을 불러오지 못했습니다: ' + err.message + '</div>';
+      });
+  </script>
+</body>
+</html>

@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<title>mock chat</title>
+<style>
+  html, body {
+    margin: 0; height: 100%; background: #fff;
+    font-family: -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+    display: flex; flex-direction: column;
+  }
+  .header { padding: 10px 12px; font-weight: 700; font-size: 13px; border-bottom: 1px solid #E5E7EB; flex-shrink: 0; }
+  #chat-mock-root { flex: 1; overflow-y: auto; }
+  .input-row { border-top: 1px solid #E5E7EB; padding: 10px; flex-shrink: 0; }
+  .input-row input { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid #E5E7EB; border-radius: 100px; }
+</style>
+</head>
+<body>
+  <div class="header">실시간 채팅</div>
+  <div id="chat-mock-root"></div>
+  <div class="input-row"><input placeholder="실시간 채팅으로 대화해 보세요" /></div>
+
+  <script src="chrome-mock.js"></script>
+  <script>
+    // content.js가 찾는 커스텀 엘리먼트 이름/구조만 최소한으로 흉내 냅니다.
+    // (실제 유튜브 커스텀 엘리먼트의 동작은 필요 없고, 태그 이름 + shadowRoot 구조만 같으면 됩니다)
+    const listRenderer = document.createElement('yt-live-chat-item-list-renderer');
+    const itemsShadow = listRenderer.attachShadow({ mode: 'open' });
+    const itemsDiv = document.createElement('div');
+    itemsDiv.id = 'items';
+    itemsShadow.appendChild(itemsDiv);
+    document.getElementById('chat-mock-root').appendChild(listRenderer);
+
+    const AVATAR_COLORS = ['#7C4DFF', '#00A67E', '#E8555A', '#2F80ED', '#F2994A'];
+    let msgCount = 0;
+
+    window.addMockMessage = function (author, text) {
+      const msgEl = document.createElement('yt-live-chat-text-message-renderer');
+      const shadow = msgEl.attachShadow({ mode: 'open' });
+      const color = AVATAR_COLORS[msgCount % AVATAR_COLORS.length];
+      shadow.innerHTML =
+        '<div style="display:flex;gap:6px;padding:4px 12px;font-size:13px;line-height:1.5;">' +
+        '<div id="author-name" style="font-weight:600;color:' + color + ';white-space:nowrap;">' + author + '</div>' +
+        '<div id="message">' + text + '</div>' +
+        '</div>';
+      itemsDiv.appendChild(msgEl);
+      msgCount++;
+      msgEl.scrollIntoView({ block: 'end' });
+    };
+
+    addMockMessage('테크좋아', '오늘 방송 몇 시까지 하나요?');
+    addMockMessage('김민수', '구독했습니다!');
+  </script>
+
+  <!-- 실제 콘텐츠 스크립트를 수정 없이 그대로 로드합니다 -->
+  <script src="../content.js"></script>
+</body>
+</html>
