@@ -1,0 +1,37 @@
+syntax = "proto2";
+
+package youtube.api.v3;
+
+service V3DataLiveChatMessageService {
+  rpc StreamList(LiveChatMessageListRequest)
+      returns (stream LiveChatMessageListResponse) {}
+}
+
+message LiveChatMessageListRequest {
+  optional string live_chat_id = 1;
+  optional uint32 max_results = 98;
+  optional string page_token = 99;
+  repeated string part = 100;
+}
+
+message LiveChatMessageListResponse {
+  optional string offline_at = 2;
+  optional string next_page_token = 100602;
+  repeated LiveChatMessage items = 1007;
+}
+
+message LiveChatMessage {
+  optional string id = 101;
+  optional LiveChatMessageSnippet snippet = 2;
+  optional LiveChatMessageAuthorDetails author_details = 3;
+}
+
+message LiveChatMessageAuthorDetails {
+  optional string display_name = 103;
+  optional string channel_id = 10101;
+}
+
+message LiveChatMessageSnippet {
+  optional string published_at = 4;
+  optional string display_message = 16;
+}

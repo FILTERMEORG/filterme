@@ -1,9 +1,10 @@
 import asyncio
-import random 
 
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from analyzer import analyze
+from youtube import get_live_chat_id
+from youtube_stream import stream_chat
 
 app = FastAPI()
 
@@ -11,28 +12,54 @@ app = FastAPI()
 def health():
     return {"status": "ok"}
 
-# --- 임시 가짜 채팅 (오후 4시 할당량 리셋되면 streamList로 교체) ---
-SAMPLES = [
-    ("정상러", "오늘 방송 진짜 재밌어요"),
-    ("도배러", "ㅋㅋㅋㅋㅋㅋㅋㅋㅋ"),
-    ("욕쟁이", "씨발 존나 노잼이네"),
-    ("정치충", "이번 선거는 여당이 이긴다"),
-    ("변태", "저 스트리머 몸매 지린다"),
-]
+rooms = {}
 
-async def fake_chat():
-    while True:
-        await asyncio.sleep(1.5)
-        yield random.choice(SAMPLES)
+
+class Room:
+    def __init__(self, video_id):
+        self.video_id = video_id
+        self.clients = set()
+        self.task = None
+
+    async def run(self):
+        chat_id = await asyncio.to_thread(get_live_chat_id, self.video_id)
+        async for author, text in stream_chat(chat_id):
+            msg = {
+                "type": "analysis",
+                "author": author,
+                "text": text,
+                "result": analyze(text),
+            }
+            for client in list(self.clients):
+                try:
+                    await client.send_json(msg)
+                except Exception:
+                    pass
+
 
 @app.websocket("/ws")
 async def ws(sock: WebSocket):
     await sock.accept()
-    await sock.receive_json()       # 확장이 {"videoId": "..."} 보냄 (지금은 무시)
-    async for author, text in fake_chat():
-        await sock.send_json({
-            "type": "analysis",
-            "author": author,
-            "text": text,
-            "result": analyze(text),
-        })
+    req = await sock.receive_json()
+    video_id = req["videoId"]
+
+    room = rooms.get(video_id)
+    if room is None:
+        room = Room(video_id)
+        rooms[video_id] = room
+        room.task = asyncio.create_task(room.run())
+    room.clients.add(sock)
+
+    try:
+        while True:
+            await sock.receive_text()          # 연결 유지 (내용 무시)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        room.clients.discard(sock)
+        if not room.clients:
+            await asyncio.sleep(30)
+            if not room.clients:
+                if room.task:
+                    room.task.cancel()
+                rooms.pop(video_id, None)
