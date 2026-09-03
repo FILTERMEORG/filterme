@@ -19,6 +19,7 @@
         const bodyMatch = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
         let bodyHtml = bodyMatch ? bodyMatch[1] : html;
         bodyHtml = bodyHtml.replace(/<script[^>]*src=["'][^"']*popup\.js["'][^>]*><\/script>/i, '');
+        bodyHtml = bodyHtml.replace(/src="icons\//g, 'src="../icons/');
         document.body.innerHTML = bodyHtml;
 
         const link = document.createElement('link');

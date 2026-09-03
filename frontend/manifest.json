@@ -32,7 +32,14 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["popup.html", "popup.js", "popup.css"],
+      "resources": [
+        "popup.html",
+        "popup.js",
+        "popup.css",
+        "icons/platforms/youtube.png",
+        "icons/platforms/chzzk.png",
+        "icons/platforms/soop.png"
+      ],
       "matches": ["https://www.youtube.com/*"]
     }
   ]
