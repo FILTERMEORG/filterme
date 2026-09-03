@@ -33,30 +33,31 @@
     c05: { label: '도배 / 반복', name: 'Spam' }
   };
 
-  // ---- 아주 단순한 키워드 기반 임시 분류기 (실제 서비스에서는 AI 분류 API로 교체) ----
-  const KEYWORDS = {
-    c02: ['씨발', 'ㅅㅂ', '병신', 'ㅂㅅ', '새끼', 'fuck', 'shit'],
-    c03: ['대통령', '정당', '국회의원', '여당', '야당', '선거', '탄핵'],
-    c04: ['19금', '노출', '성인방송', '야한']
+  const BLUR_LABEL = {
+    c02: '이 채팅은 욕설이 포함되어 있습니다.',
+    c03: '이 채팅은 정치적 발언이 포함되어 있습니다.',
+    c04: '이 채팅은 성적 표현이 포함되어 있습니다.',
+    c05: '이 채팅은 도배로 분류되었습니다.'
   };
-  const recentTexts = []; // 도배(C05) 감지용 최근 메시지 기록
-  const RECENT_LIMIT = 15;
+
+  // ---- 백엔드(WebSocket) 연동 ----
+  const THRESHOLD = 70;
+  const SCORE_TO_CAT = { profanity: 'c02', political: 'c03', sexual: 'c04', spam: 'c05' };
+  const serverCat = new Map();
+  const norm = (s) => (s || '').trim().replace(/\s+/g, ' ');
+  function resultToCategory(r) {
+    let best = null, top = THRESHOLD - 1;
+    for (const [k, c] of Object.entries(SCORE_TO_CAT)) {
+      const v = r[k] ?? 0;
+      if (v >= THRESHOLD && v > top) { best = c; top = v; }
+    }
+    return best;
+  }
 
   function classify(text) {
-    const t = text.trim();
+    const t = norm(text);
     if (!t) return null;
-
-    for (const cat of ['c02', 'c03', 'c04']) {
-      if (KEYWORDS[cat].some((kw) => t.includes(kw))) return cat;
-    }
-
-    // 도배(C05): 최근 메시지 중 동일 텍스트가 2번 이상 반복되면 스팸으로 취급
-    const dupCount = recentTexts.filter((m) => m === t).length;
-    recentTexts.push(t);
-    if (recentTexts.length > RECENT_LIMIT) recentTexts.shift();
-    if (dupCount >= 2) return 'c05';
-
-    return null; // Normal(C01)
+    if (serverCat.has(t)) return serverCat.get(t);
   }
 
   // ---- storage ----
@@ -285,15 +286,15 @@
   // ---- 실제 채팅 DOM 관찰 & 필터 적용 ----
   function findItemsContainer() {
     const listRenderer = document.querySelector('yt-live-chat-item-list-renderer');
-    if (!listRenderer || !listRenderer.shadowRoot) return null;
-    return listRenderer.shadowRoot.querySelector('#items');
+    if (!listRenderer) return null;
+    const root = listRenderer.shadowRoot || listRenderer;
+    return root.querySelector('#items');
   }
 
   function extractMessage(node) {
     const tag = node.tagName ? node.tagName.toLowerCase() : '';
     if (tag !== 'yt-live-chat-text-message-renderer') return null; // 슈퍼챗/멤버십 등은 건드리지 않음
-    const root = node.shadowRoot;
-    if (!root) return null;
+    const root = node.shadowRoot || node;
     const authorEl = root.querySelector('#author-name');
     const messageEl = root.querySelector('#message');
     if (!messageEl) return null;
@@ -308,7 +309,8 @@
     const category = classify(text);
 
     // 이전 처리 흔적 제거 (표시 방식이 바뀌었을 때 재적용하기 위함)
-    node.classList.remove('fm-blur', 'fm-blocked');
+    node.classList.remove('fm-blur', 'fm-blocked', 'fm-revealed');
+    delete node.dataset.fmLabel;
     messageEl.style.filter = '';
     node.style.display = '';
 
@@ -318,13 +320,10 @@
 
     if (settings.displayMode === 'blur') {
       node.classList.add('fm-blur');
+      node.dataset.fmLabel = BLUR_LABEL[category] || '이 채팅은 필터되었습니다.';
       messageEl.style.filter = 'blur(4px)';
-      messageEl.style.cursor = 'pointer';
-      messageEl.title = `${CATEGORY_META[category].label}로 분류됨 · 클릭하여 확인`;
-      messageEl.onclick = () => {
-        const revealed = messageEl.style.filter === 'none';
-        messageEl.style.filter = revealed ? 'blur(4px)' : 'none';
-      };
+      node.style.cursor = 'pointer';
+      node.onclick = () => node.classList.toggle('fm-revealed');
     } else {
       node.style.display = 'none';
     }
@@ -356,9 +355,58 @@
     observer.observe(container, { childList: true });
   }
 
+  function connectBackend() {
+    let videoId = '';
+    try { videoId = new URL(document.referrer).searchParams.get('v') || ''; } catch (e) {}
+    let ws;
+    const open = () => {
+      ws = new WebSocket('ws://127.0.0.1:8000/ws');
+      ws.onopen = () => {
+        ws.send(JSON.stringify({ videoId }));
+        const texts = [];
+        document.querySelectorAll('yt-live-chat-text-message-renderer').forEach((node) => {
+          const el = (node.shadowRoot || node).querySelector('#message');
+          const tx = norm(el ? el.textContent : '');
+          if (tx) texts.push(tx);
+        });
+        if (texts.length) ws.send(JSON.stringify({ type: 'backfill', texts }));
+      };
+      ws.onmessage = (ev) => {
+        let m;
+        try { m = JSON.parse(ev.data); } catch (e) { return; }
+        if (m.type !== 'analysis') return;
+        serverCat.set(norm(m.text), resultToCategory(m.result));
+        reclassifyAllVisible();
+      };
+      ws.onclose = () => setTimeout(open, 3000);
+      ws.onerror = () => ws.close();
+    };
+    open();
+  }
+
+  function injectLabelStyle() {
+    const s = document.createElement('style');
+    s.textContent = `
+      yt-live-chat-text-message-renderer.fm-blur { position: relative !important; }
+      yt-live-chat-text-message-renderer.fm-blur::after {
+        content: attr(data-fm-label);
+        position: absolute; inset: 0;
+        display: flex; align-items: center; justify-content: center;
+        text-align: center; font-size: 11px; color: #fff;
+        background: rgba(0,0,0,0.62); padding: 0 8px;
+        z-index: 3; pointer-events: none;
+      }
+      yt-live-chat-text-message-renderer.fm-blur.fm-revealed::after { display: none; }
+      yt-live-chat-text-message-renderer.fm-blur.fm-revealed #message { filter: none !important; }
+    `;
+    document.head.appendChild(s);
+  }
+
   function init() {
+    injectLabelStyle();
     buildUI();
     observeChat();
+    connectBackend();
   }
 
   // ---- Shadow DOM 안에서 쓰는 스타일 ----

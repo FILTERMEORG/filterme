@@ -52,7 +52,15 @@ async def ws(sock: WebSocket):
 
     try:
         while True:
-            await sock.receive_text()          # 연결 유지 (내용 무시)
+            data = await sock.receive_json()
+            if data.get("type") == "backfill":
+                for text in data.get("texts", []):
+                    await sock.send_json({
+                        "type":"analysis",
+                        "author":"",
+                        "text":text,
+                        "result":analyze(text)
+                    })
     except WebSocketDisconnect:
         pass
     finally:
