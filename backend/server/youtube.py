@@ -8,11 +8,23 @@ from googleapiclient.discovery import build
 from analyzer import analyze
 
 load_dotenv()
-yt = build("youtube", "v3", developerKey=os.getenv("YOUTUBE_API_KEY"))
+yt = None
+
+
+def get_youtube_client():
+    global yt
+    if yt is None:
+        api_key = os.getenv("YOUTUBE_API_KEY")
+        if not api_key:
+            raise RuntimeError("YOUTUBE_API_KEY가 설정되지 않았습니다.")
+        yt = build("youtube", "v3", developerKey=api_key)
+    return yt
 
 
 def get_live_chat_id(video_id):
-    r = yt.videos().list(part="liveStreamingDetails", id=video_id).execute()
+    r = get_youtube_client().videos().list(
+        part="liveStreamingDetails", id=video_id
+    ).execute()
     items = r.get("items", [])
     if not items:
         raise RuntimeError("영상 없음")
@@ -26,7 +38,7 @@ def poll_chat(video_id):
     chat_id = get_live_chat_id(video_id)
     page_token = None
     while True:
-        r = yt.liveChatMessages().list(
+        r = get_youtube_client().liveChatMessages().list(
             liveChatId=chat_id,
             part="snippet,authorDetails",
             pageToken=page_token,

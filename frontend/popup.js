@@ -17,8 +17,8 @@ function showFatalError(message) {
     banner = document.createElement('div');
     banner.id = 'fmErrorBanner';
     banner.style.cssText =
-      'margin:10px 14px;padding:10px 12px;background:#FEF2F2;color:#B91C1C;' +
-      'font-size:11.5px;line-height:1.5;border-radius:8px;border:1px solid #FCA5A5;';
+      'margin:10px 14px;padding:10px 12px;background:rgba(233,20,41,.16);color:#FF6B81;' +
+      'font-size:11.5px;line-height:1.5;border-radius:8px;border:1px solid rgba(233,20,41,.4);';
     document.body.insertBefore(banner, document.body.firstChild.nextSibling);
   }
   banner.textContent = '⚠️ 팝업 로드 중 오류: ' + message + ' (우클릭 → 검사로 콘솔 확인)';
