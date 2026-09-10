@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="/frontend/assets/readme/" alt="FILTERME — 보고 싶은 채팅만, 보이게 하세요." width="100%">
+<img src="/frontend/assets/readme/hero.png" alt="FILTERME — 보고 싶은 채팅만, 보이게 하세요." width="100%">
 
 ### 보고 싶은 채팅만, 보이게 하세요.
 
@@ -14,23 +14,23 @@
 
 <br>
 
-<img src="assets/readme/why.png" alt="채팅창, 이제 신경 쓰지 마세요 — 실시간 처리 / 채팅 기록 저장 안 함 / 내 맘대로 설정" width="100%">
+<img src="/frontend/assets/readme/why.png" alt="채팅창, 이제 신경 쓰지 마세요 — 실시간 처리 / 채팅 기록 저장 안 함 / 내 맘대로 설정" width="100%">
 
 <br>
 
-<img src="assets/readme/filters.png" alt="4가지 기준으로 채팅을 분류해요 — 욕설·비속어 / 정치 관련 대화 / 성적 표현 / 도배·반복" width="100%">
+<img src="/frontend/assets/readme/filters.png" alt="4가지 기준으로 채팅을 분류해요 — 욕설·비속어 / 정치 관련 대화 / 성적 표현 / 도배·반복" width="100%">
 
 <br>
 
-<img src="assets/readme/how.png" alt="작동 방식 — AI가 채팅을 분석하고, 내 설정과 비교해, 화면에서 걸러내요" width="100%">
+<img src="/frontend/assets/readme/how.png" alt="작동 방식 — AI가 채팅을 분석하고, 내 설정과 비교해, 화면에서 걸러내요" width="100%">
 
 <br>
 
-<img src="assets/readme/preview.png" alt="간단한 설정 화면과 지원 플랫폼" width="100%">
+<img src="/frontend/assets/readme/preview.png" alt="간단한 설정 화면과 지원 플랫폼" width="100%">
 
 <br>
 
-<img src="assets/readme/privacy.png" alt="당신의 채팅은 당신만 봐요" width="100%">
+<img src="/frontend/assets/readme/privacy.png" alt="당신의 채팅은 당신만 봐요" width="100%">
 
 <br>
 
