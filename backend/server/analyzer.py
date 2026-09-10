@@ -5,6 +5,27 @@ import pickle
 
 REPEAT = re.compile(r"(.)\1{3,}")
 URL = re.compile(r"https?://|www\.")
+_WORD_RE = re.compile(r"[a-z0-9*@#]+")
+
+# 영어 욕설 (노골적인 것만; damn/piss/ass/hell 처럼 약하거나 오탐 큰 건 제외)
+BADWORDS_EN = {
+    "fuck", "fucking", "fuckin", "fucker", "fucked", "motherfucker", "motherfucking",
+    "fuk", "fck", "fuckyou", "stfu", "wtf", "gtfo",
+    "shit", "shitty", "bullshit", "shithead",
+    "bitch", "bitches", "asshole", "assholes", "dumbass", "jackass",
+    "cunt", "dick", "dickhead", "cock", "pussy", "bastard",
+    "slut", "whore", "nigger", "nigga", "niggas", "faggot", "fag", "retard", "retarded",
+}
+_LEET = str.maketrans({"0": "o", "1": "i", "3": "e", "@": "a", "$": "s"})
+_EN_SUBSTR = ("fuckyou", "fuck", "fck", "phuck", "shit", "bitch", "biatch", "asshole", "motherfuck")
+
+
+def _kw_en(m: str) -> bool:
+    low = m.lower()
+    if set(_WORD_RE.findall(low)) & BADWORDS_EN:
+        return True
+    de = low.translate(_LEET).replace("*", "").replace(" ", "")
+    return any(w in de for w in _EN_SUBSTR)
 
 _MODEL_DIR = pathlib.Path(__file__).parent / "model"
 _st = None
@@ -67,7 +88,7 @@ def analyze(message: str) -> dict:
         ai = {"profanity": 0, "sexual": 0, "political": 0}
 
     # 사전 점수
-    prof_kw = 90 if _kw(n, BADWORDS) else 0
+    prof_kw = 90 if (_kw(n, BADWORDS) or _kw_en(m)) else 0
     pol_kw = 85 if _kw(m, POLITICAL_KW) else 0
     sex_kw = 85 if _kw(n, SEXUAL_KW) else 0
 

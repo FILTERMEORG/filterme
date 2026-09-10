@@ -19,7 +19,12 @@
 
   const STRIP_HEIGHT = 34; // fm-strip의 실제 높이(px). 레이아웃 보정에 사용됩니다.
 
+  // 서버(AI 필터) WebSocket 주소. 배포 후 'wss://<도메인>/ws' 로 교체.
+  const SERVER_WS = 'ws://127.0.0.1:8000/ws';
+
   const DEFAULTS = {
+    translateRecvTo: '', // '' = 끄기, 아니면 'ko'|'en'|'ja'|'zh'|'es'|'ru'
+    translateSendTo: 'en', // 송신 번역 대상 언어
     onboarded: false,
     filterEnabled: true,
     categories: { c02: true, c03: true, c04: true, c05: true },
@@ -45,6 +50,75 @@
   const SCORE_TO_CAT = { profanity: 'c02', political: 'c03', sexual: 'c04', spam: 'c05' };
   const serverCat = new Map();
   const norm = (s) => (s || '').trim().replace(/\s+/g, ' ');
+  const _trs = new Map();
+  // from→to 번역기. 언어팩이 없으면 create()에 user activation(클릭 등)이 필요하다.
+  // onProgress(0~1): 언어팩 다운로드 진행률 콜백 (선택).
+  async function getTranslator(from, to, onProgress) {
+    if (!('Translator' in self) || !from || !to || from === to) return null;
+    const key = from + '>' + to;
+    if (_trs.has(key)) return _trs.get(key);
+
+    const p = (async () => {
+      let avail = 'downloadable';
+      try {
+        avail = await Translator.availability({ sourceLanguage: from, targetLanguage: to });
+      } catch (e) { /* 구현에 따라 없을 수 있음 */ }
+      if (avail === 'unavailable') return null;
+      try {
+        return await Translator.create({
+          sourceLanguage: from,
+          targetLanguage: to,
+          monitor(m) {
+            if (!onProgress) return;
+            m.addEventListener('downloadprogress', (e) => {
+              try { onProgress(typeof e.loaded === 'number' ? e.loaded : 0); } catch (_) { }
+            });
+          }
+        });
+      } catch (e) {
+        return null;
+      }
+    })();
+    _trs.set(key, p);
+
+    const r = await p;
+    if (!r) {
+      // unavailable 확정이면 캐시 유지(재시도 안 함), 그 외(제스처 없음/다운로드 실패)엔 삭제해 재시도 가능
+      let avail = 'unavailable';
+      try {
+        avail = await Translator.availability({ sourceLanguage: from, targetLanguage: to });
+      } catch (e) { }
+      if (avail !== 'unavailable') _trs.delete(key);
+    }
+    return r;
+  }
+
+  // 지금까지 화면에서 감지된 언어들 + 흔한 언어의 팩을 미리 받아둔다.
+  // user activation(셀렉트 change / 버튼 클릭) 컨텍스트에서 호출해야 다운로드가 허용됨.
+  const WARMUP_LANGS = ['en', 'es', 'ja', 'pt', 'zh'];
+  function warmupTranslators(to, onProgress) {
+    if (!to || !('Translator' in self)) return;
+    const langs = new Set(WARMUP_LANGS);
+    document.querySelectorAll('yt-live-chat-text-message-renderer').forEach((n) => {
+      if (n.dataset.fmLang) langs.add(n.dataset.fmLang);
+    });
+    langs.forEach((from) => {
+      if (from && from !== to) getTranslator(from, to, onProgress);
+    });
+  }
+
+  // 감지 언어 코드 → 국기 이모지 (미매핑 언어는 2글자 코드로 폴백)
+  const LANG_FLAG = {
+    en: '🇺🇸', ja: '🇯🇵', zh: '🇨🇳', es: '🇪🇸', pt: '🇵🇹', fr: '🇫🇷', de: '🇩🇪',
+    ru: '🇷🇺', id: '🇮🇩', th: '🇹🇭', vi: '🇻🇳', ar: '🇸🇦', hi: '🇮🇳', tr: '🇹🇷',
+    it: '🇮🇹', pl: '🇵🇱', nl: '🇳🇱', uk: '🇺🇦'
+  };
+  let _detector = null;
+  async function getDetector() {
+    if (!('LanguageDetector' in self)) return null;
+    if (!_detector) _detector = LanguageDetector.create().catch(() => null);
+    return _detector;
+  }
   function resultToCategory(r) {
     let best = null, top = THRESHOLD - 1;
     for (const [k, c] of Object.entries(SCORE_TO_CAT)) {
@@ -83,6 +157,14 @@
     Object.keys(changes).forEach((key) => {
       settings[key] = changes[key].newValue;
     });
+    // 수신 번역 대상 언어가 바뀌면 기존 번역 캐시 폐기 (언어 재감지는 불필요)
+    if (changes.translateRecvTo) {
+      document.querySelectorAll('yt-live-chat-text-message-renderer').forEach((n) => {
+        delete n.dataset.fmTrText;
+        delete n.dataset.fmTrTo;
+        delete n.dataset.fmTrSkip;
+      });
+    }
     syncAllUI();
   });
 
@@ -105,8 +187,22 @@
     shadowRoot.innerHTML = `
       <style>${STYLE}</style>
       <div class="fm-strip" id="fmStrip" style="pointer-events:auto;">
+        <span class="fm-conn-dot connecting" id="fmConnDot"></span>
         <span class="fm-mark">F<span>M</span></span>
         <span class="fm-toggle" id="fmToggle"><span class="dot"></span>필터 ON</span>
+        <span class="fm-conn-txt" id="fmConnTxt"></span>
+        <span class="fm-sel-wrap">
+          <select class="fm-sel" id="fmRecvLang" title="받는 채팅 번역">
+            <option value="">번역 끄기</option>
+            <option value="ko">한국어로</option>
+            <option value="en">English</option>
+            <option value="ja">日本語</option>
+            <option value="zh">中文</option>
+            <option value="es">Español</option>
+            <option value="ru">Русский</option>
+          </select>
+          <span class="fm-tr-status" id="fmTrStatus"></span>
+        </span>
       </div>
 
       <div class="fm-fab" id="fmFab" style="pointer-events:auto;" title="전체 설정 열기">F<span class="m">M</span></div>
@@ -141,6 +237,10 @@
     els = {
       fmStrip: shadowRoot.getElementById('fmStrip'),
       fmToggle: shadowRoot.getElementById('fmToggle'),
+      fmConnDot: shadowRoot.getElementById('fmConnDot'),
+      fmConnTxt: shadowRoot.getElementById('fmConnTxt'),
+      fmRecvLang: shadowRoot.getElementById('fmRecvLang'),
+      fmTrStatus: shadowRoot.getElementById('fmTrStatus'),
       fmFab: shadowRoot.getElementById('fmFab'),
       fmBackdrop: shadowRoot.getElementById('fmBackdrop'),
       fmModal: shadowRoot.getElementById('fmModal'),
@@ -242,7 +342,17 @@
       o.classList.toggle('active', o.dataset.mode === settings.displayMode);
     });
 
+    if (els.fmRecvLang) els.fmRecvLang.value = settings.translateRecvTo || '';
+
+    syncSendBar();
     reclassifyAllVisible();
+  }
+
+  // 언어팩 다운로드 진행률을 스트립에 표시
+  function showTrStatus(loaded) {
+    if (!els.fmTrStatus) return;
+    if (loaded >= 1) { els.fmTrStatus.textContent = ''; return; }
+    els.fmTrStatus.textContent = `언어팩 ${Math.round((loaded || 0) * 100)}%`;
   }
 
   function wireEvents() {
@@ -250,10 +360,25 @@
       e.stopPropagation();
       saveSettings({ filterEnabled: !settings.filterEnabled });
       syncAllUI();
+      warmupTranslators(settings.translateRecvTo, showTrStatus); // 제스처 보강
     });
 
+    // 받는 채팅 번역 언어 선택 — 이 change 가 user activation → 언어팩 다운로드 허용
+    if (els.fmRecvLang) {
+      els.fmRecvLang.addEventListener('change', () => {
+        const to = els.fmRecvLang.value;
+        saveSettings({ translateRecvTo: to });
+        if (els.fmTrStatus) els.fmTrStatus.textContent = '';
+        warmupTranslators(to, showTrStatus);
+        syncAllUI();
+      });
+    }
+
     // 전체 설정 모달을 여는 진입점은 이 플로팅 버튼 하나뿐이다.
-    els.fmFab.addEventListener('click', openModal);
+    els.fmFab.addEventListener('click', () => {
+      openModal();
+      warmupTranslators(settings.translateRecvTo, showTrStatus); // 제스처 보강
+    });
     els.fmModalClose.addEventListener('click', closeModal);
     els.fmBackdrop.addEventListener('click', closeModal);
 
@@ -275,7 +400,7 @@
     const style = document.createElement('style');
     style.id = 'filterme-native-space';
     style.textContent = `
-      yt-live-chat-app, yt-live-chat-renderer, #chat, #chat-container {
+      yt-live-chat-app {
         box-sizing: border-box !important;
         padding-top: ${STRIP_HEIGHT}px !important;
       }
@@ -301,11 +426,91 @@
     return { authorEl, messageEl };
   }
 
+  // 언어 감지는 노드당 1회. 번역은 대상 언어(settings.translateRecvTo)별로 캐시.
+  // 화면 표시(원문 ↔ 번역문 교체, 국기 배지)는 현재 대상 언어에 맞춰 그때그때 결정.
+  async function translateNode(node, messageEl, text) {
+    if (!settings) return;
+    const to = settings.translateRecvTo || '';
+    const seen = node.dataset.fmLang !== undefined;
+
+    if (!to) { // 끄기 — 이전에 번역됐던 노드는 원문 복구
+      if (seen) applyTranslationDisplay(node, messageEl);
+      return;
+    }
+    if (!text.trim() || node.style.display === 'none') return;
+
+    if (!node.dataset.fmOrigText) node.dataset.fmOrigText = text;
+
+    // 언어 감지 (1회) — 신뢰도 낮거나 너무 짧으면 무시 (이모지/짧은 텍스트 오탐 방지)
+    if (!seen) {
+      let lang = '';
+      const det = await getDetector();
+      if (det) {
+        try {
+          const r = await det.detect(text);
+          const top = r && r[0];
+          if (top && top.confidence >= 0.5 && text.trim().length >= 3) {
+            lang = (top.detectedLanguage || '').toLowerCase();
+          }
+        } catch (e) { }
+      }
+      node.dataset.fmLang = lang;
+    }
+    const lang = node.dataset.fmLang || '';
+
+    if (!lang || lang === to || node.dataset.fmTrSkip) { applyTranslationDisplay(node, messageEl); return; }
+    if (node.dataset.fmTrText && node.dataset.fmTrTo === to) { applyTranslationDisplay(node, messageEl); return; }
+
+    const tr = await getTranslator(lang, to);
+    if (tr) {
+      try {
+        const src = node.dataset.fmOrigText || text;
+        const out = await tr.translate(src);
+        if (out && out.trim() && out !== src) {
+          node.dataset.fmTrText = out;
+          node.dataset.fmTrTo = to;
+        }
+      } catch (e) { }
+    } else if (_trs.has(lang + '>' + to)) {
+      node.dataset.fmTrSkip = '1'; // availability=unavailable 확정 → 재시도 안 함
+    }
+    // 성공 못 했으면 fmProcessed 안 남김 → 다음 reclassifyAllVisible에서 재시도(팩 다운로드 대기)
+    applyTranslationDisplay(node, messageEl);
+  }
+
+  function applyTranslationDisplay(node, messageEl) {
+    const to = (settings && settings.translateRecvTo) || '';
+    const lang = node.dataset.fmLang || '';
+    const orig = node.dataset.fmOrigText;
+    const trg = (node.dataset.fmTrTo === to) ? node.dataset.fmTrText : '';
+
+    const authorEl = (node.shadowRoot || node).querySelector('#author-name');
+    let badge = authorEl && authorEl.querySelector('.fm-lang');
+    if (to && lang && lang !== to && authorEl) {
+      if (!badge) {
+        badge = document.createElement('span');
+        badge.className = 'fm-lang';
+        authorEl.appendChild(badge);
+      }
+      badge.textContent = LANG_FLAG[lang] || lang.toUpperCase();
+      badge.dataset.lang = lang;
+    } else if (badge) {
+      badge.remove();
+    }
+
+    if (trg) {
+      if (messageEl.textContent !== trg) messageEl.textContent = trg;
+    } else if (orig != null && messageEl.textContent !== orig) {
+      messageEl.textContent = orig;
+    }
+  }
+
   function applyFilterToNode(node) {
     const parsed = extractMessage(node);
     if (!parsed) return;
     const { messageEl } = parsed;
-    const text = messageEl.textContent || '';
+    // 번역으로 본문이 교체됐을 수 있으므로 분류·매칭은 항상 원문 기준
+    const text = node.dataset.fmOrigText || messageEl.textContent || '';
     const category = classify(text);
 
     // 이전 처리 흔적 제거 (표시 방식이 바뀌었을 때 재적용하기 위함)
@@ -313,6 +518,8 @@
     delete node.dataset.fmLabel;
     messageEl.style.filter = '';
     node.style.display = '';
+
+    translateNode(node, messageEl, text);
 
     if (!settings.filterEnabled || !category || !settings.categories[category]) {
       return; // Normal이거나, 필터가 꺼져 있거나, 해당 카테고리가 OFF면 그대로 노출
@@ -355,13 +562,36 @@
     observer.observe(container, { childList: true });
   }
 
+  // ---- 서버 연결 상태 표시 (Cloud Run 콜드스타트 대비) ----
+  let _connTimer = null;
+  let _connT0 = 0;
+  function setConnState(state) {
+    if (els.fmConnDot) els.fmConnDot.className = 'fm-conn-dot ' + state;
+    if (!els.fmConnTxt) return;
+    if (state === 'connected') {
+      els.fmConnTxt.textContent = '';
+    } else if (state === 'retrying') {
+      els.fmConnTxt.textContent = '재연결 중…';
+    } else {
+      const s = Math.round((Date.now() - _connT0) / 1000);
+      els.fmConnTxt.textContent = s > 3 ? `서버 깨우는 중… ${s}초` : '서버 연결 중…';
+    }
+  }
+
   function connectBackend() {
     let videoId = '';
-    try { videoId = new URL(document.referrer).searchParams.get('v') || ''; } catch (e) {}
+    try { videoId = new URL(document.referrer).searchParams.get('v') || ''; } catch (e) { }
     let ws;
     const open = () => {
-      ws = new WebSocket('ws://127.0.0.1:8000/ws');
+      _connT0 = Date.now();
+      setConnState('connecting');
+      clearInterval(_connTimer);
+      _connTimer = setInterval(() => setConnState('connecting'), 1000);
+
+      ws = new WebSocket(SERVER_WS);
       ws.onopen = () => {
+        clearInterval(_connTimer);
+        setConnState('connected');
         ws.send(JSON.stringify({ videoId }));
         const texts = [];
         document.querySelectorAll('yt-live-chat-text-message-renderer').forEach((node) => {
@@ -378,10 +608,100 @@
         serverCat.set(norm(m.text), resultToCategory(m.result));
         reclassifyAllVisible();
       };
-      ws.onclose = () => setTimeout(open, 3000);
+      ws.onclose = () => {
+        clearInterval(_connTimer);
+        setConnState('retrying');
+        setTimeout(open, 3000);
+      };
       ws.onerror = () => ws.close();
     };
     open();
+  }
+
+  // ---- 송신 번역 (내가 쓴 한국어 → 대상 언어로 변환 후 유튜브 채팅으로 전송) ----
+  async function sendTranslated(koText) {
+    const src = (koText || '').trim();
+    if (!src) return;
+
+    const to = (settings && settings.translateSendTo) || 'en';
+    let out = src;
+    if (to !== 'ko') {
+      const tr = await getTranslator('ko', to);
+      if (tr) {
+        try { out = await tr.translate(src); } catch (e) { out = src; }
+      }
+    }
+
+    const input =
+      document.querySelector('yt-live-chat-text-input-field-renderer #input') ||
+      document.querySelector('#input.yt-live-chat-text-input-field-renderer');
+    if (!input) return;
+
+    input.focus();
+    // execCommand 경로가 유튜브 웹컴포넌트(Polymer)의 내부 상태·전송버튼 활성화를 제대로 갱신함
+    try { document.execCommand('selectAll', false, null); } catch (e) { }
+    try { document.execCommand('insertText', false, out); } catch (e) { }
+    input.dispatchEvent(new InputEvent('input', { bubbles: true, data: out, inputType: 'insertText' }));
+
+    // 전송 버튼이 활성화될 틈을 준 뒤 클릭
+    setTimeout(() => {
+      const btn = document.querySelector('#send-button button, yt-live-chat-message-input-renderer #send-button button');
+      if (btn && !btn.disabled) btn.click();
+    }, 60);
+  }
+
+  function syncSendBar() {
+    const bar = document.getElementById('fm-send-bar');
+    if (!bar) return;
+    bar.style.display = (settings && settings.translateRecvTo && ('Translator' in self)) ? 'flex' : 'none';
+    const sel = document.getElementById('fm-send-lang');
+    if (sel && settings) sel.value = settings.translateSendTo || 'en';
+  }
+
+  let _sendBarTries = 0;
+  function injectSendBar() {
+    if (!('Translator' in self)) return;
+    if (document.getElementById('fm-send-bar')) return;
+    const panel = document.querySelector('yt-live-chat-message-input-renderer');
+    if (!panel || !panel.parentNode) {
+      if (_sendBarTries++ < 25) setTimeout(injectSendBar, 800); // 로그인 안 됨/채팅 종료 시 무한 재시도 방지
+      return;
+    }
+
+    const bar = document.createElement('div');
+    bar.id = 'fm-send-bar';
+    bar.innerHTML =
+      '<select id="fm-send-lang" title="보낼 언어">' +
+      '<option value="en">EN</option><option value="ja">JA</option>' +
+      '<option value="zh">ZH</option><option value="es">ES</option>' +
+      '<option value="ru">RU</option>' +
+      '</select>' +
+      '<input id="fm-send-input" type="text" autocomplete="off" ' +
+      'placeholder="한국어로 입력 → 번역해서 전송 (Enter)" />' +
+      '<button id="fm-send-btn" type="button">번역 전송</button>';
+    panel.parentNode.insertBefore(bar, panel);
+
+    const sel = bar.querySelector('#fm-send-lang');
+    const inp = bar.querySelector('#fm-send-input');
+    const btn = bar.querySelector('#fm-send-btn');
+    sel.addEventListener('change', () => {
+      saveSettings({ translateSendTo: sel.value });
+      getTranslator('ko', sel.value); // 이 change 도 제스처 → 팩 미리 받기
+    });
+    const go = async () => {
+      const v = inp.value;
+      if (!v.trim()) return;
+      inp.value = '';
+      inp.disabled = true; btn.disabled = true;
+      try { await sendTranslated(v); }
+      finally { inp.disabled = false; btn.disabled = false; inp.focus(); }
+    };
+    inp.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); go(); }
+    });
+    btn.addEventListener('click', go);
+
+    syncSendBar();
   }
 
   function injectLabelStyle() {
@@ -397,7 +717,15 @@
         z-index: 3; pointer-events: none;
       }
       yt-live-chat-text-message-renderer.fm-blur.fm-revealed::after { display: none; }
-      yt-live-chat-text-message-renderer.fm-blur.fm-revealed #message { filter: none !important; }
+      yt-live-chat-text-message-renderer.fm-blur.fm-revealed #message { filter: none !important; };
+      .fm-lang { margin-left: 4px; font-size: 0.95em; vertical-align: middle; }
+      #fm-send-bar { display: none; gap: 6px; padding: 6px 10px; background: #0f0f0f; border-top: 1px solid #2a2a2a; align-items: center; }
+      #fm-send-lang { flex: 0 0 auto; background: #222; border: 1px solid #333; border-radius: 8px; color: #fff; padding: 5px 4px; font-size: 11px; outline: none; }
+      #fm-send-input { flex: 1; min-width: 0; background: #222; border: 1px solid #333; border-radius: 100px; color: #fff; padding: 6px 12px; font-size: 12px; outline: none; }
+      #fm-send-input::placeholder { color: #888; }
+      #fm-send-input:disabled { opacity: 0.5; }
+      #fm-send-btn { background: #1DB954; color: #000; border: none; border-radius: 100px; padding: 6px 14px; font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap; }
+      #fm-send-btn:disabled { opacity: 0.5; cursor: default; }
     `;
     document.head.appendChild(s);
   }
@@ -407,6 +735,7 @@
     buildUI();
     observeChat();
     connectBackend();
+    injectSendBar();
   }
 
   // ---- Shadow DOM 안에서 쓰는 스타일 ----
@@ -435,6 +764,20 @@
     .fm-toggle.off{background:var(--fm-bg-hover);color:var(--fm-text-secondary);}
     .fm-toggle.off .dot{background:#727272;}
     .fm-toggle .dot{width:5px;height:5px;border-radius:50%;display:inline-block;}
+
+    .fm-conn-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;background:#727272;}
+    .fm-conn-dot.connected{background:var(--fm-accent);}
+    .fm-conn-dot.connecting{background:var(--fm-warn);animation:fm-pulse 1s ease-in-out infinite;}
+    .fm-conn-dot.retrying{background:var(--fm-danger);}
+    @keyframes fm-pulse{0%,100%{opacity:1;}50%{opacity:.25;}}
+    .fm-conn-txt{font-size:9.5px;color:var(--fm-text-secondary);white-space:nowrap;}
+
+    .fm-sel-wrap{display:flex;align-items:center;gap:6px;margin-left:auto;}
+    .fm-sel{
+      background:var(--fm-bg-hover);color:#fff;border:1px solid var(--fm-border);
+      border-radius:100px;font-size:10.5px;font-weight:700;padding:3px 6px;cursor:pointer;outline:none;
+    }
+    .fm-tr-status{font-size:9.5px;color:var(--fm-text-secondary);white-space:nowrap;}
 
     .fm-fab{
       position:fixed;right:16px;bottom:76px;width:42px;height:42px;border-radius:50%;

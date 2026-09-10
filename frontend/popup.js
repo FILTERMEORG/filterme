@@ -70,6 +70,7 @@ function render() {
   } catch (err) {
     showFatalError(err.message);
   }
+
 }
 
 function save(patch) {
@@ -145,4 +146,3 @@ if (resetOnboardEl) {
     }
   });
 }
-

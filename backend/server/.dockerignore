@@ -1,0 +1,11 @@
+.venv/
+data/
+train/
+__pycache__/
+*.pyc
+*.pyo
+.env
+.env.*
+.DS_Store
+run_local.sh
+.hfcache/
