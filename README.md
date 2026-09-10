@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="/frontend/assets/readme/hero.png" alt="FILTERME — 보고 싶은 채팅만, 보이게 하세요." width="100%">
+<img src="/frontend/assets/readme/hero.gif" alt="FILTERME — 보고 싶은 채팅만, 보이게 하세요." width="100%">
 
 ### 보고 싶은 채팅만, 보이게 하세요.
 
