@@ -1,13 +1,32 @@
-"""채팅 분석기. AI(임베딩+회귀) + 사전 하이브리드."""
+"""채팅 분석기.
+
+- 성적/욕설: OpenAI Moderation API(무료) + 키워드
+- 정치: 키워드 (Moderation 에 카테고리 없음)
+- 도배: 정규식
+Moderation 실패/429 시 키워드만으로 폴백 (과금·다운 없음).
+"""
 import re
-import pathlib
-import pickle
+import os
+import asyncio
+
+import httpx
+from dotenv import load_dotenv
+
+load_dotenv()
 
 REPEAT = re.compile(r"(.)\1{3,}")
 URL = re.compile(r"https?://|www\.")
 _WORD_RE = re.compile(r"[a-z0-9*@#]+")
 
-# 영어 욕설 (노골적인 것만; damn/piss/ass/hell 처럼 약하거나 오탐 큰 건 제외)
+_OPENAI_KEY = os.getenv("OPENAI_API_KEY")
+_MOD_URL = "https://api.openai.com/v1/moderations"
+_MOD_MODEL = "omni-moderation-latest"
+_BATCH = 30          # moderation input 배열 크기
+_INPUT_MAX = 200     # 채팅 1건 최대 길이
+
+print(f"[analyzer] Moderation API {'사용' if _OPENAI_KEY else '키 없음 → 키워드 전용'}")
+
+# --- 영어 욕설 (노골적인 것만; damn/piss/ass/hell 처럼 약하거나 오탐 큰 건 제외) ---
 BADWORDS_EN = {
     "fuck", "fucking", "fuckin", "fucker", "fucked", "motherfucker", "motherfucking",
     "fuk", "fck", "fuckyou", "stfu", "wtf", "gtfo",
@@ -27,20 +46,8 @@ def _kw_en(m: str) -> bool:
     de = low.translate(_LEET).replace("*", "").replace(" ", "")
     return any(w in de for w in _EN_SUBSTR)
 
-_MODEL_DIR = pathlib.Path(__file__).parent / "model"
-_st = None
-_clf = {}
-try:
-    from sentence_transformers import SentenceTransformer
-    _st = SentenceTransformer("jhgan/ko-sroberta-multitask")
-    for c in ["profanity", "sexual", "political"]:
-        with open(_MODEL_DIR / f"{c}.pkl", "rb") as f:
-            _clf[c] = pickle.load(f)
-    print("[analyzer] AI 모델 로드 완료")
-except Exception as e:
-    print(f"[analyzer] 모델 없음, 사전만 사용: {e}")
 
-# --- 사전 ---
+# --- 한국어 사전 ---
 BADWORDS = [
     "시발", "씨발", "ㅅㅂ", "ㅆㅂ", "시1발", "씨1발", "ㅄ", "ㅂㅅ", "병신", "븅신",
     "존나", "ㅈㄴ", "좆", "좃", "개새끼", "새끼", "ㅅㄲ", "니애미", "느금마", "엄마없",
@@ -59,12 +66,14 @@ SEXUAL_KW = [
     "핥", "빨아", "애무",
 ]
 
+
 def _kw(t, words):
     return any(w in t for w in words)
 
+
 def _norm(t):
-    t = t.lower().replace(" ", "")
-    return t
+    return t.lower().replace(" ", "")
+
 
 def _spam(m):
     if REPEAT.search(m):
@@ -76,31 +85,69 @@ def _spam(m):
     return 0
 
 
-def analyze(message: str) -> dict:
+def _mod_score(md, cat):
+    """Moderation 카테고리 점수 0~100. flagged 불린이면 최소 80으로 끌어올림
+    (raw 점수가 가벼운 욕설엔 0.4~0.5 로 낮게 나옴)."""
+    raw = (md.get("category_scores") or {}).get(cat) or 0
+    flagged = (md.get("categories") or {}).get(cat, False)
+    s = int(round(raw * 100))
+    return max(80, s) if flagged else s
+
+
+async def moderate(texts):
+    """OpenAI Moderation. list[dict] 반환, 실패 시 None (→ 키워드 폴백)."""
+    if not _OPENAI_KEY or not texts:
+        return None
+    payload = {"model": _MOD_MODEL, "input": texts}
+    headers = {"Authorization": f"Bearer {_OPENAI_KEY}"}
+    for attempt in range(2):
+        try:
+            async with httpx.AsyncClient(timeout=8) as client:
+                r = await client.post(_MOD_URL, json=payload, headers=headers)
+            if r.status_code == 200:
+                return r.json().get("results")
+            if r.status_code == 429:
+                if attempt == 0:
+                    await asyncio.sleep(1.5)
+                    continue
+                print("[analyzer] moderation 429 → 키워드 폴백")
+                return None
+            print(f"[analyzer] moderation {r.status_code}: {r.text[:200]}")
+            return None
+        except Exception as e:
+            print(f"[analyzer] moderation 오류: {e}")
+            if attempt == 0:
+                await asyncio.sleep(1)
+                continue
+            return None
+    return None
+
+
+def _combine(message: str, md) -> dict:
+    """키워드 + (있으면) Moderation 결과 md 를 합쳐 5개 항목 점수."""
     m = (message or "").strip()
     n = _norm(m)
 
-    # AI 점수
-    if _clf and _st:
-        v = _st.encode([m], normalize_embeddings=True)
-        ai = {c: int(round(_clf[c].predict_proba(v)[0][1] * 100)) for c in _clf}
-    else:
-        ai = {"profanity": 0, "sexual": 0, "political": 0}
-
-    # 사전 점수
     prof_kw = 90 if (_kw(n, BADWORDS) or _kw_en(m)) else 0
     pol_kw = 85 if _kw(m, POLITICAL_KW) else 0
     sex_kw = 85 if _kw(n, SEXUAL_KW) else 0
 
-    profanity = max(ai["profanity"], prof_kw)
-    political = max(ai["political"], pol_kw)
-    sexual = max(ai["sexual"], sex_kw)
+    prof_mod = sex_mod = 0
+    if md:
+        prof_mod = max(_mod_score(md, "harassment"), _mod_score(md, "hate"))
+        sex_mod = _mod_score(md, "sexual")
+        if (md.get("categories") or {}).get("sexual/minors"):
+            sex_mod = 100
 
-    # 보정: 욕설 강하면 sexual 오탐 억제 (사전에 성적 단어 없을 때만)
-    if profanity >= 55 and sex_kw == 0:
+    profanity = max(prof_kw, prof_mod)
+    sexual = max(sex_kw, sex_mod)
+    political = pol_kw  # Moderation 에 정치 카테고리 없음
+    spam = _spam(m)
+
+    # 보정: 욕설 강하면 sexual 오탐 억제 (성적 신호가 약할 때만)
+    if profanity >= 55 and sex_kw == 0 and sex_mod < 55:
         sexual = min(sexual, 15)
     # 보정: 스팸이면 나머지 낮춤
-    spam = _spam(m)
     if spam >= 80:
         profanity = min(profanity, 30)
         sexual = min(sexual, 15)
@@ -115,3 +162,19 @@ def analyze(message: str) -> dict:
         "spam": spam,
     }
 
+
+async def analyze_batch(texts):
+    """채팅 여러 건을 Moderation 배치 + 키워드로 분석. 입력 순서대로 dict 리스트 반환."""
+    texts = [(t or "")[:_INPUT_MAX] for t in texts]
+    out = []
+    for i in range(0, len(texts), _BATCH):
+        chunk = texts[i:i + _BATCH]
+        mod = await moderate(chunk)
+        for j, t in enumerate(chunk):
+            out.append(_combine(t, mod[j] if mod else None))
+    return out
+
+
+def analyze(message: str) -> dict:
+    """키워드 전용 (youtube.py CLI · 폴백용). AI 판정은 analyze_batch 를 쓴다."""
+    return _combine(message, None)
