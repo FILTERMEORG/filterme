@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FILTERME 개인정보 처리방침</title>
+  <style>
+    body { max-width: 720px; margin: 0 auto; padding: 40px 20px 80px; font: 15px/1.7 -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; color: #1a1a1a; background: #fff; }
+    h1 { font-size: 22px; margin: 0 0 4px; }
+    h2 { font-size: 16px; margin: 32px 0 8px; }
+    .updated { color: #888; font-size: 13px; margin-bottom: 24px; }
+    ul { padding-left: 20px; }
+    li { margin: 4px 0; }
+    code { background: #f2f2f2; padding: 1px 5px; border-radius: 4px; font-size: 0.9em; }
+    a { color: #1a73e8; }
+  </style>
+</head>
+<body>
+  <h1>FILTERME 개인정보 처리방침</h1>
+  <div class="updated">최종 업데이트: 2026년 9월 11일</div>
+
+  <p>
+    FILTERME(이하 “확장 프로그램”)는 YouTube 라이브 채팅을 실시간으로 분석해
+    사용자가 설정한 항목(욕설, 성적 표현, 정치 관련, 도배)에 해당하는 채팅을
+    화면에서 가리는 크롬 확장 프로그램입니다. 이 문서는 확장 프로그램이 어떤
+    데이터를 다루는지 설명합니다.
+  </p>
+
+  <h2>1. 처리하는 정보</h2>
+  <ul>
+    <li>
+      <strong>채팅 메시지 텍스트</strong> — 사용자가 보고 있는 YouTube 라이브 채팅의
+      메시지 텍스트를 필터 판정을 위해 확장 프로그램의 분석 서버로 전송합니다.
+      메시지 내용 외의 정보(시청자 계정, 시청 기록 등)는 전송하지 않습니다.
+    </li>
+    <li>
+      <strong>설정값</strong> — 필터 켜기/끄기, 항목별 on/off, 표시 방식(블러/차단),
+      번역 언어 등의 설정은 브라우저의 <code>chrome.storage.local</code>에만
+      저장되며 외부로 전송되지 않습니다.
+    </li>
+  </ul>
+  <p>확장 프로그램은 로그인·계정을 요구하지 않으며, 이름·이메일 등 개인 식별 정보를 수집하지 않습니다.</p>
+
+  <h2>2. 정보의 이용 및 제3자 제공</h2>
+  <ul>
+    <li>
+      <strong>OpenAI</strong> — 채팅 텍스트의 유해성(욕설·성적 표현) 분류를 위해
+      OpenAI의 Moderation API로 메시지 텍스트를 전송합니다. 전송된 텍스트는
+      해당 목적으로만 사용되며 OpenAI의 정책에 따라 처리됩니다.
+    </li>
+    <li>정치 관련·도배 판정은 서버 내부의 키워드·규칙으로 처리하며 외부로 전송하지 않습니다.</li>
+    <li>번역 기능은 크롬 브라우저 내장 기능으로 사용자 기기에서 처리되며, 서버나 외부로 전송되지 않습니다.</li>
+    <li>위 목적 외에 개인정보를 제3자에게 제공·판매하지 않으며, 광고 목적으로 사용하지 않습니다.</li>
+  </ul>
+
+  <h2>3. 보관 및 파기</h2>
+  <ul>
+    <li>채팅 메시지 텍스트는 분석 서버에 <strong>저장하지 않습니다.</strong> 분석 처리 후 폐기되며, 반복 요청을 줄이기 위한 일시적 메모리 캐시만 사용합니다(서버 재시작 시 소멸).</li>
+    <li>설정값은 사용자가 확장 프로그램을 삭제하면 브라우저에서 함께 삭제됩니다.</li>
+  </ul>
+
+  <h2>4. 권한 사용 목적</h2>
+  <ul>
+    <li><code>storage</code> — 사용자 설정을 브라우저에 저장하기 위함.</li>
+    <li><code>https://www.youtube.com/*</code> — YouTube 라이브 채팅 화면을 읽고 필터를 적용하기 위함.</li>
+    <li>확장 프로그램 분석 서버 도메인 — 채팅 분석 결과를 실시간으로 받기 위함.</li>
+  </ul>
+
+  <h2>5. 변경</h2>
+  <p>본 방침이 변경되면 이 페이지에서 갱신 날짜와 함께 공지합니다.</p>
+
+  <h2>6. 문의</h2>
+  <p>문의: <a href="mailto:jjsteel9@gmail.com">jjsteel9@gmail.com</a></p>
+</body>
+</html>

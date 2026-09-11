@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "FILTERME (Local Test)",
-  "version": "0.3.0",
-  "description": "AI 기반 개인화 라이브 채팅 필터 - 로컬 테스트용 데모 (키워드 기반 임시 분류기, 백엔드 없음)",
+  "name": "FILTERME",
+  "version": "1.0.0",
+  "description": "YouTube 라이브 채팅에서 욕설·성적·정치·도배 채팅을 AI로 걸러내고, 외국어 채팅을 실시간 번역합니다.",
   "action": {
     "default_popup": "popup.html",
     "default_title": "FILTERME 전체 필터 설정",
