@@ -658,7 +658,8 @@
   function syncSendBar() {
     const bar = document.getElementById('fm-send-bar');
     if (!bar) return;
-    bar.style.display = (settings && settings.translateRecvTo && ('Translator' in self)) ? 'flex' : 'none';
+    // 받는 번역이 꺼져 있어도 송신 번역은 독립적으로 쓸 수 있게 함
+    bar.style.display = ('Translator' in self) ? 'flex' : 'none';
     const sel = document.getElementById('fm-send-lang');
     if (sel && settings) sel.value = settings.translateSendTo || 'en';
   }
