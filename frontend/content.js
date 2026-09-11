@@ -20,7 +20,7 @@
   const STRIP_HEIGHT = 34; // fm-strip의 실제 높이(px). 레이아웃 보정에 사용됩니다.
 
   // 서버(AI 필터) WebSocket 주소. 배포 후 'wss://<도메인>/ws' 로 교체.
-  const SERVER_WS = 'ws://127.0.0.1:8000/ws';
+  const SERVER_WS = 'wss://filterme.onrender.com/ws';
 
   const DEFAULTS = {
     translateRecvTo: '', // '' = 끄기, 아니면 'ko'|'en'|'ja'|'zh'|'es'|'ru'
