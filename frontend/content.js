@@ -786,7 +786,7 @@
     .fm-tr-status{font-size:9.5px;color:var(--fm-text-secondary);white-space:nowrap;}
 
     .fm-fab{
-      position:fixed;right:16px;bottom:76px;width:42px;height:42px;border-radius:50%;
+      position:fixed;right:16px;bottom:145px;width:42px;height:42px;border-radius:50%;
       background:#000;color:#fff;display:flex;align-items:center;justify-content:center;
       font-size:11px;font-weight:800;cursor:pointer;box-shadow:0 6px 16px -4px rgba(0,0,0,.6);z-index:2147483000; /* base */
     }
