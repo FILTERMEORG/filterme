@@ -530,7 +530,12 @@
       node.dataset.fmLabel = BLUR_LABEL[category] || '이 채팅은 필터되었습니다.';
       messageEl.style.filter = 'blur(4px)';
       node.style.cursor = 'pointer';
-      node.onclick = () => node.classList.toggle('fm-revealed');
+      // 사용자가 클릭해서 열어둔 상태는 재분류 후에도 유지
+      if (node.dataset.fmRevealed === '1') node.classList.add('fm-revealed');
+      node.onclick = () => {
+        node.classList.toggle('fm-revealed');
+        node.dataset.fmRevealed = node.classList.contains('fm-revealed') ? '1' : '0';
+      };
     } else {
       node.style.display = 'none';
     }
