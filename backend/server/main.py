@@ -1,5 +1,6 @@
 import re
 import asyncio
+import collections
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
@@ -26,6 +27,11 @@ def _total_clients():
     return sum(len(r.clients) for r in rooms.values())
 
 
+def _dup_key(t):
+    """동일 메시지 판단용 정규화 (도배 감지). 공백 제거 + 소문자."""
+    return re.sub(r"\s+", "", (t or "").lower())
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -38,6 +44,7 @@ class Room:
         self.task = None
         self._buf = []          # [(author, text)]
         self._lock = asyncio.Lock()
+        self._recent = collections.deque(maxlen=60)   # [(author, dup_key)] 최근 도배 판정용
 
     async def run(self):
         try:
@@ -80,6 +87,15 @@ class Room:
             texts = [t for _, t in batch]
             results = await analyze_batch(texts)
             for (author, text), result in zip(batch, results):
+                # 같은 작성자가 이미 보낸 것과 동일한 메시지 → 도배 (한 메시지 안 반복은 analyzer 가 처리)
+                key = _dup_key(text)
+                if key and any(a == author and k == key for a, k in self._recent):
+                    result["spam"] = max(result["spam"], 90)
+                    worst = max(result["profanity"], result["political"], result["sexual"], result["spam"])
+                    result["normal"] = max(0, 100 - worst)
+                if key:
+                    self._recent.append((author, key))
+
                 msg = {"type": "analysis", "author": author, "text": text, "result": result}
                 for client in list(self.clients):
                     try:
