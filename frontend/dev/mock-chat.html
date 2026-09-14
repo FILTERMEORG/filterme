@@ -52,7 +52,14 @@
     addMockMessage('김민수', '구독했습니다!');
   </script>
 
-  <!-- 실제 콘텐츠 스크립트를 수정 없이 그대로 로드합니다 -->
+  <!-- 실제 콘텐츠 스크립트를 수정 없이 그대로 로드합니다.
+       manifest.json 의 content_scripts.js 배열과 반드시 같은 순서여야 합니다
+       (fm-*.js 는 전역 스코프를 공유하는 방식이라 순서가 곧 의존성입니다). -->
+  <script src="../fm-core.js"></script>
+  <script src="../fm-filter.js"></script>
+  <script src="../fm-translate.js"></script>
+  <script src="../fm-socket.js"></script>
+  <script src="../fm-ui.js"></script>
   <script src="../content.js"></script>
 </body>
 </html>

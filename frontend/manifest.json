@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "FILTERME",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "YouTube 라이브 채팅에서 욕설·성적·정치·도배 채팅을 AI로 걸러내고, 외국어 채팅을 실시간 번역합니다.",
   "action": {
     "default_popup": "popup.html",
@@ -29,7 +29,7 @@
         "https://www.youtube.com/live_chat_replay*"
       ],
       "all_frames": true,
-      "js": ["content.js"],
+      "js": ["fm-core.js", "fm-filter.js", "fm-translate.js", "fm-socket.js", "fm-ui.js", "content.js"],
       "run_at": "document_idle"
     }
   ],
