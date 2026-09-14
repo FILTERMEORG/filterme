@@ -1,3 +1,19 @@
+"""FastAPI 서버 진입점 — YouTube 라이브 채팅 수신 → 분석 → 확장으로 broadcast.
+
+전체 흐름
+    확장(content.js) --WS accept--> ws()
+    ws() 가 videoId 로 Room 을 찾거나 새로 만듦
+    Room.run() 이 youtube_stream.stream_chat() 으로 gRPC streamList 연결을 열고
+    들어오는 채팅을 버퍼에 쌓았다가(_recv) FLUSH_INTERVAL 마다(_flush)
+    analyzer.analyze_batch() 로 일괄 분석 → 같은 Room 을 보는 모든 클라이언트에 전송
+
+핵심 설계: 같은 방송(videoId)을 보는 시청자가 몇 명이든 Room 은 하나,
+streamList 연결도 하나, 분석도 채팅당 1번만 한다 (fan-out 은 마지막에 broadcast 로).
+그래서 비용/할당량이 "동시 시청자 수"가 아니라 "동시에 필터링 중인 방송 수"에 비례한다.
+
+이 파일이 하지 않는 것: 실제 필터 판정 로직(analyzer.py), YouTube gRPC 통신 세부사항
+(youtube_stream.py), REST 로 videoId → liveChatId 조회(youtube.py).
+"""
 import re
 import asyncio
 import collections
@@ -38,6 +54,12 @@ def health():
 
 
 class Room:
+    """방송(videoId) 하나를 대표하는 방. 이 방송을 보는 모든 WebSocket 클라이언트를 묶는다.
+
+    생명주기: 첫 시청자 접속 시 생성 → run() 이 gRPC 스트림을 열고 계속 돎 →
+    마지막 시청자가 나가면 30초 유예(새로고침 대비) 후 정리(ws() 의 finally 블록 참고).
+    """
+
     def __init__(self, video_id):
         self.video_id = video_id
         self.clients = set()
@@ -106,6 +128,16 @@ class Room:
 
 @app.websocket("/ws")
 async def ws(sock: WebSocket):
+    """확장 하나의 WS 연결. 프로토콜:
+
+    클라이언트 → 서버 (최초 1회, 필수)
+        {"videoId": "<11자리 유튜브 videoId>"}
+    클라이언트 → 서버 (이후, 선택, 여러 번 가능)
+        {"type": "backfill", "texts": ["연결 전부터 화면에 있던 채팅", ...]}
+    서버 → 클라이언트 (실시간 채팅 + backfill 응답 공통)
+        {"type": "analysis", "author": str, "text": str,
+         "result": {"normal","profanity","political","sexual","spam"}}  # 각 0~100
+    """
     await sock.accept()
     try:
         req = await sock.receive_json()

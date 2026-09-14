@@ -1,3 +1,14 @@
+"""YouTube Data API v3 (REST) 래퍼.
+
+서버(main.py)가 실제로 쓰는 건 `get_live_chat_id()` 하나뿐이다 — videoId 를 받아
+`liveStreamingDetails.activeLiveChatId` 를 조회한다 (라이브가 아니면 예외).
+실시간 채팅 자체는 이 파일이 아니라 youtube_stream.py(gRPC streamList) 가 받는다.
+
+`poll_chat()` 은 REST `liveChatMessages.list` 폴링 방식 — 초기에 썼다가 채팅이
+없어도 계속 요청해 할당량을 금방 소진해서 streamList 로 교체됐다. 지금은 서버가
+쓰지 않고, 이 파일을 직접 실행했을 때(`python youtube.py <videoId>`)만 동작하는
+CLI 테스트 도구로만 남아 있다.
+"""
 import os
 import sys
 import time
@@ -34,6 +45,8 @@ def get_live_chat_id(video_id):
     return chat_id
 
 
+# ⚠️ 레거시: 서버는 이제 이 함수를 쓰지 않는다 (youtube_stream.stream_chat 로 대체됨).
+# CLI 로 이 파일을 직접 실행할 때(아래 __main__)만 쓰인다.
 def poll_chat(video_id):
     chat_id = get_live_chat_id(video_id)
     page_token = None

@@ -1,9 +1,20 @@
-"""채팅 분석기.
+"""채팅 분석기 — 항목별로 방법을 다르게 섞은 하이브리드.
 
-- 성적/욕설: OpenAI Moderation API(무료) + 키워드
-- 정치: 키워드 (Moderation 에 카테고리 없음)
-- 도배: 정규식
-Moderation 실패/429 시 키워드만으로 폴백 (과금·다운 없음).
+| 항목 | 방법 | 이유 |
+|---|---|---|
+| profanity(욕설) | max(Moderation harassment/hate, 한국어+영어 사전) | Moderation 이 놓치는 초성체(ㅅㅂ)·우회표현은 사전이 보완 |
+| sexual(성적) | max(Moderation sexual, 성적 사전) | 위와 동일한 이유 |
+| political(정치) | 키워드 사전만 | Moderation 에 정치 카테고리 자체가 없음 |
+| spam(도배) | 정규식 (문자반복/URL) | 패턴이 명확해 AI가 필요 없는 영역 |
+
+호출 경로 2가지:
+- `analyze_batch(texts)` — 실제 서비스 경로. Moderation 배치 호출 + 키워드 합성.
+  Moderation 이 실패/429 여도 예외를 던지지 않고 그 배치만 키워드 결과로 폴백한다
+  (요금·서비스 다운 없이 품질만 일시적으로 낮아짐).
+- `analyze(message)` — 동기, 키워드만. Moderation 자체를 안 씀. youtube.py CLI가
+  참고용으로 쓰는 것 외에는 실서비스 경로가 아니다.
+
+두 경로 모두 내부적으로 `_combine()` 하나로 수렴한다 — 점수 합성 규칙이 한 곳에만 있다.
 """
 import re
 import os
