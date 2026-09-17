@@ -23,6 +23,7 @@ function buildUI() {
     <div class="fm-strip" id="fmStrip" style="pointer-events:auto;">
       <span class="fm-conn-dot connecting" id="fmConnDot"></span>
       <span class="fm-mark">F<span>M</span></span>
+      <i class="fm-gear" id="fmGear">⚙</i>
       <span class="fm-toggle" id="fmToggle"><span class="dot"></span></span>
       <span class="fm-conn-txt" id="fmConnTxt"></span>
       <span class="fm-toggle" id="fmTrToggle"><span class="dot"></span></span>
@@ -73,8 +74,11 @@ function buildUI() {
     </div>
   `;
 
+  shadowRoot.appendChild(buildManagerPanel()); // fm-manager.js — fm-modal/fm-backdrop과 같은 레벨
+
   els = {
     fmStrip: shadowRoot.getElementById('fmStrip'),
+    fmGear: shadowRoot.getElementById('fmGear'),
     fmToggle: shadowRoot.getElementById('fmToggle'),
     fmConnDot: shadowRoot.getElementById('fmConnDot'),
     fmConnTxt: shadowRoot.getElementById('fmConnTxt'),
@@ -98,7 +102,11 @@ function buildUI() {
     obDesc: shadowRoot.getElementById('obDesc'),
     obBody: shadowRoot.getElementById('obBody'),
     obApply: shadowRoot.getElementById('obApply'),
-    obSkip: shadowRoot.getElementById('obSkip')
+    obSkip: shadowRoot.getElementById('obSkip'),
+    fmMgrPanel: shadowRoot.getElementById('fmMgrPanel'),
+    fmMgrBody: shadowRoot.getElementById('fmMgrBody'),
+    fmMgrRefresh: shadowRoot.getElementById('fmMgrRefresh'),
+    fmMgrClose: shadowRoot.getElementById('fmMgrClose')
   };
 
   // popup.html을 그대로 불러온다. chrome.runtime.getURL은 content script에서도 사용 가능.
@@ -106,6 +114,8 @@ function buildUI() {
 
   renderCountryOptions();
   wireEvents();
+  wireManagerEvents(); // fm-manager.js
+  refreshManagerTexts(); // fm-manager.js
   syncAllUI();
 
   if (!settings.onboarded) {
@@ -154,6 +164,7 @@ function applyOnboardTexts() {
 
 // ---- 전체 설정 모달 (플로팅 로고 버튼 클릭 시 그 자리에서 바로 열림) ----
 function openModal() {
+  closeManagerPanel(); // AI 매니저 패널과 상호 배타 (fm-manager.js)
   els.fmBackdrop.classList.add('open');
   els.fmModal.classList.add('open');
 }
@@ -222,9 +233,12 @@ function renderOnboardCategories() {
 function syncAllUI() {
   if (!els.fmToggle) return;
 
-  els.fmFab.title = t('open_settings_title');
+  els.fmFab.title = t('mgr_open_title');
+  if (els.fmGear) els.fmGear.title = t('settings_gear_title');
   showOnboardStep();
   applyOnboardTexts();
+  refreshManagerTexts(); // fm-manager.js
+  renderManagerBody(); // fm-manager.js
 
   els.fmToggle.classList.toggle('on', settings.filterEnabled);
   els.fmToggle.classList.toggle('off', !settings.filterEnabled);
@@ -314,11 +328,17 @@ function wireEvents() {
   }
   if (els.fmLangScrim) els.fmLangScrim.addEventListener('click', closeLangSheet);
 
-  // 전체 설정 모달을 여는 진입점은 이 플로팅 버튼 하나뿐이다.
+  // FAB는 AI 매니저 패널을, 스트립의 톱니바퀴는 전체 설정 모달을 연다.
   els.fmFab.addEventListener('click', () => {
-    openModal();
+    openManagerPanel(); // fm-manager.js
     warmupTranslators(settings.translateRecvTo, showTrStatus); // 제스처 보강
   });
+  if (els.fmGear) {
+    els.fmGear.addEventListener('click', () => {
+      openModal();
+      warmupTranslators(settings.translateRecvTo, showTrStatus); // 제스처 보강
+    });
+  }
   els.fmModalClose.addEventListener('click', closeModal);
   els.fmBackdrop.addEventListener('click', closeModal);
 
@@ -455,12 +475,47 @@ const STYLE = `
   .fm-lang-item-check{color:var(--fm-accent);font-weight:800;visibility:hidden;}
   .fm-lang-item.selected .fm-lang-item-check{visibility:visible;}
 
+  .fm-gear{font-size:12px;color:var(--fm-text-secondary);cursor:pointer;font-style:normal;margin-left:2px;}
+  .fm-gear:hover{color:#fff;}
+
   .fm-fab{
     position:fixed;right:16px;bottom:145px;width:42px;height:42px;border-radius:50%;
     background:#000;color:#fff;display:flex;align-items:center;justify-content:center;
     font-size:11px;font-weight:800;cursor:pointer;box-shadow:0 6px 16px -4px rgba(0,0,0,.6);z-index:2147483000; /* base */
+    border:2px solid #7F77DD;
   }
   .fm-fab .m{color:var(--fm-accent);}
+
+  /* ---- AI 매니저 FILTERME: 독립 플로팅 패널(백드롭 없음, FAB 클릭 시 바로 열림) ---- */
+  .fm-mgr-panel{
+    position:fixed;top:${STRIP_HEIGHT + 8}px;left:10px;width:300px;
+    background:var(--fm-bg-elevated);border-radius:14px;box-shadow:0 20px 44px -14px rgba(0,0,0,.6);
+    z-index:2147483002;display:none;overflow:hidden;
+  }
+  .fm-mgr-panel.open{display:block;}
+  .fm-mgr-head{padding:12px 14px;border-bottom:1px solid var(--fm-border);display:flex;align-items:center;gap:8px;}
+  .fm-mgr-avatar{font-size:12px;font-weight:800;color:#fff;}
+  .fm-mgr-avatar span{color:#7F77DD;}
+  .fm-mgr-title{font-size:12.5px;font-weight:800;color:#fff;flex:1;}
+  .fm-mgr-refresh,.fm-mgr-close{cursor:pointer;color:var(--fm-text-secondary);font-size:13px;font-style:normal;margin-left:6px;}
+  .fm-mgr-refresh:hover,.fm-mgr-close:hover{color:#fff;}
+  .fm-mgr-tabs{display:flex;border-bottom:1px solid var(--fm-border);}
+  .fm-mgr-tab{flex:1;text-align:center;padding:9px 0;font-size:11.5px;font-weight:700;color:var(--fm-text-secondary);cursor:pointer;border-bottom:2px solid transparent;}
+  .fm-mgr-tab.active{color:#fff;border-bottom-color:#7F77DD;}
+  .fm-mgr-body{padding:12px 14px;max-height:280px;overflow-y:auto;}
+  .fm-mgr-empty{font-size:12px;color:var(--fm-text-secondary);text-align:center;padding:20px 0;}
+  .fm-mgr-status{font-size:10.5px;color:var(--fm-text-secondary);margin-bottom:8px;}
+  .fm-mgr-bullet{font-size:12.5px;color:#fff;line-height:1.6;margin-bottom:4px;}
+  .fm-mgr-tl{margin-top:10px;border-top:1px solid var(--fm-border);padding-top:8px;}
+  .fm-mgr-tl-row{font-size:11.5px;color:var(--fm-text-secondary);line-height:1.7;}
+  .fm-mgr-tl-time{color:#7F77DD;font-weight:700;margin-right:4px;}
+  .fm-mgr-mood-note{font-size:10.5px;color:var(--fm-text-secondary);margin-bottom:12px;}
+  .fm-mgr-bars{display:flex;gap:8px;align-items:flex-end;}
+  .fm-mgr-bar-col{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;}
+  .fm-mgr-bar-track{height:56px;width:100%;max-width:28px;display:flex;align-items:flex-end;}
+  .fm-mgr-bar{width:100%;min-height:2px;border-radius:4px 4px 0 0;}
+  .fm-mgr-bar-pct{font-size:10px;color:#fff;font-weight:700;}
+  .fm-mgr-bar-label{font-size:9.5px;color:var(--fm-text-secondary);white-space:nowrap;}
 
   /* ---- 전체 설정 모달: 플로팅 버튼 클릭 시 그 자리에서 바로 열림 ---- */
   .fm-backdrop{

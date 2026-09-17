@@ -29,7 +29,7 @@
         "https://www.youtube.com/live_chat_replay*"
       ],
       "all_frames": true,
-      "js": ["fm-core.js", "fm-i18n.js", "fm-filter.js", "fm-translate.js", "fm-socket.js", "fm-ui.js", "content.js"],
+      "js": ["fm-core.js", "fm-i18n.js", "fm-filter.js", "fm-translate.js", "fm-manager.js", "fm-socket.js", "fm-ui.js", "content.js"],
       "run_at": "document_idle"
     }
   ],

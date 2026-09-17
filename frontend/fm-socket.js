@@ -6,6 +6,7 @@
 
 let _connTimer = null;
 let _connT0 = 0;
+let ws = null; // 모듈 스코프로 승격 — sendToServer()가 다른 파일(fm-manager.js)에서도 접근 가능하도록
 function setConnState(state) {
   if (els.fmConnDot) els.fmConnDot.className = 'fm-conn-dot ' + state;
   if (!els.fmConnTxt) return;
@@ -22,7 +23,6 @@ function setConnState(state) {
 function connectBackend() {
   let videoId = '';
   try { videoId = new URL(document.referrer).searchParams.get('v') || ''; } catch (e) { }
-  let ws;
   const open = () => {
     _connT0 = Date.now();
     setConnState('connecting');
@@ -45,6 +45,7 @@ function connectBackend() {
     ws.onmessage = (ev) => {
       let m;
       try { m = JSON.parse(ev.data); } catch (e) { return; }
+      if (m.type === 'summary' || m.type === 'mood') { onManagerServerMessage(m); return; } // fm-manager.js
       if (m.type !== 'analysis') return;
       serverCat.set(norm(m.text), resultToCategory(m.result));
       reclassifyAllVisible();
@@ -57,4 +58,11 @@ function connectBackend() {
     ws.onerror = () => ws.close();
   };
   open();
+}
+
+// 다른 파일(fm-manager.js)에서 서버로 메시지를 보낼 때 사용. 콜드스타트/재연결 중에는 조용히 드롭.
+function sendToServer(msg) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    try { ws.send(JSON.stringify(msg)); } catch (e) { }
+  }
 }

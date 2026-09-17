@@ -15,12 +15,15 @@ streamList 연결도 하나, 분석도 채팅당 1번만 한다 (fan-out 은 마
 (youtube_stream.py), REST 로 videoId → liveChatId 조회(youtube.py).
 """
 import re
+import time
 import asyncio
 import collections
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from analyzer import analyze_batch
+from captions import get_recent_captions
+from summarizer import summarize_context
 from youtube import get_live_chat_id
 from youtube_stream import stream_chat
 
@@ -35,6 +38,7 @@ INPUT_MAX = 200
 
 FLUSH_INTERVAL = 1.2   # 초. 이 주기로 모아서 배치 분석
 BUF_CAP = 500          # 버퍼 상한 (분석이 느릴 때 무한 증가 방지)
+SUMMARY_COOLDOWN_SEC = 60  # "최근" 탭 새로고침 쿨다운 — LLM 비용이 드는 쪽만 적용
 
 rooms = {}
 
@@ -68,6 +72,13 @@ class Room:
         self._lock = asyncio.Lock()
         self._recent = collections.deque(maxlen=60)   # [(author, dup_key)] 최근 도배 판정용
 
+        self._context_texts = collections.deque(maxlen=300)  # 요약용 채팅 텍스트 (모더레이션 _buf와 별개)
+        self.last_summary = None       # summarize_context()가 반환한 dict
+        self.last_summary_ts = 0.0
+        self._summary_lock = asyncio.Lock()  # request_summary 동시 호출 시 LLM 중복 호출 방지 (_lock과는 별개)
+        self._mood_counts = {"normal": 0, "profanity": 0, "political": 0, "sexual": 0, "spam": 0}
+        self._mood_total = 0
+
     async def run(self):
         try:
             chat_id = await asyncio.to_thread(get_live_chat_id, self.video_id)
@@ -92,6 +103,7 @@ class Room:
             self._buf.append((author, text[:INPUT_MAX]))
             if len(self._buf) > BUF_CAP:
                 self._buf = self._buf[-BUF_CAP:]
+            self._context_texts.append(text[:INPUT_MAX])
 
     async def _flush_loop(self):
         while True:
@@ -108,6 +120,7 @@ class Room:
                 return
             texts = [t for _, t in batch]
             results = await analyze_batch(texts)
+            cats = ("normal", "profanity", "political", "sexual", "spam")
             for (author, text), result in zip(batch, results):
                 # 같은 작성자가 이미 보낸 것과 동일한 메시지 → 도배 (한 메시지 안 반복은 analyzer 가 처리)
                 key = _dup_key(text)
@@ -118,12 +131,69 @@ class Room:
                 if key:
                     self._recent.append((author, key))
 
+                top_cat = max(cats, key=lambda c: result.get(c, 0))
+                self._mood_counts[top_cat] += 1
+                self._mood_total += 1
+
                 msg = {"type": "analysis", "author": author, "text": text, "result": result}
                 for client in list(self.clients):
                     try:
                         await client.send_json(msg)
                     except Exception:
                         pass
+
+            if self._mood_total > 500:
+                # 완전 초기화 대신 절반으로 감쇠 — 최근 흐름 위주로 유지하되 그래프가 매번 툭툭 끊겨 보이지 않게
+                for c in cats:
+                    self._mood_counts[c] //= 2
+                # 개별 카운트 합으로 재계산 — mood_total을 별도로 //2 하면 정수 나눗셈 오차가 누적되어
+                # 여러 번 감쇠되는 동안 퍼센트 합이 서서히 100%에서 벗어난다.
+                self._mood_total = sum(self._mood_counts.values())
+
+            if self._mood_total:
+                pct = {c: round(self._mood_counts[c] / self._mood_total * 100) for c in cats}
+                mood_msg = {"type": "mood", "percentages": pct}
+                for client in list(self.clients):
+                    try:
+                        await client.send_json(mood_msg)
+                    except Exception:
+                        pass
+
+    async def request_summary(self, force=False):
+        async with self._summary_lock:  # 두 클라이언트가 거의 동시에 새로고침해도 LLM은 한 번만
+            now = time.time()
+            if not force and self.last_summary is not None and (now - self.last_summary_ts) < SUMMARY_COOLDOWN_SEC:
+                await self._broadcast_summary(cached=True)
+                return
+
+            captions_text = await get_recent_captions(self.video_id)
+            chat_texts = list(self._context_texts)
+            result = await summarize_context(captions_text, chat_texts)
+            if result is not None:
+                self.last_summary = result
+                self.last_summary_ts = now
+                await self._broadcast_summary(cached=False)
+            else:
+                # LLM 미연동/실패 시 기존 캐시(없으면 available:false)를 그대로 재전송
+                await self._broadcast_summary(cached=True)
+
+    async def _broadcast_summary(self, cached):
+        if self.last_summary is None:
+            msg = {"type": "summary", "available": False}
+        else:
+            msg = {
+                "type": "summary",
+                "available": True,
+                "source": self.last_summary["source"],
+                "bullets": self.last_summary["bullets"],
+                "timeline": self.last_summary["timeline"],
+                "cached": cached,
+            }
+        for client in list(self.clients):
+            try:
+                await client.send_json(msg)
+            except Exception:
+                pass
 
 
 @app.websocket("/ws")
@@ -134,9 +204,13 @@ async def ws(sock: WebSocket):
         {"videoId": "<11자리 유튜브 videoId>"}
     클라이언트 → 서버 (이후, 선택, 여러 번 가능)
         {"type": "backfill", "texts": ["연결 전부터 화면에 있던 채팅", ...]}
+        {"type": "summary_request"}  # "최근" 탭 새로고침 버튼
     서버 → 클라이언트 (실시간 채팅 + backfill 응답 공통)
         {"type": "analysis", "author": str, "text": str,
          "result": {"normal","profanity","political","sexual","spam"}}  # 각 0~100
+    서버 → 클라이언트 (신규)
+        {"type": "summary", "available": bool, "source"?, "bullets"?, "timeline"?, "cached"?}
+        {"type": "mood", "percentages": {...}}  # 쿨다운 없이 flush 주기(1.2초)마다 자동 push
     """
     await sock.accept()
     try:
@@ -162,6 +236,8 @@ async def ws(sock: WebSocket):
         rooms[video_id] = room
         room.task = asyncio.create_task(room.run())
     room.clients.add(sock)
+    if room.last_summary is None and len(room._context_texts) >= 5:
+        asyncio.create_task(room.request_summary())
 
     try:
         while True:
@@ -178,6 +254,8 @@ async def ws(sock: WebSocket):
                         "text": text,
                         "result": result,
                     })
+            elif isinstance(data, dict) and data.get("type") == "summary_request":
+                await room.request_summary(force=False)
     except (WebSocketDisconnect, Exception):
         pass
     finally:
