@@ -25,18 +25,8 @@ function buildUI() {
       <span class="fm-mark">F<span>M</span></span>
       <span class="fm-toggle" id="fmToggle"><span class="dot"></span>필터 ON</span>
       <span class="fm-conn-txt" id="fmConnTxt"></span>
-      <span class="fm-sel-wrap">
-        <select class="fm-sel" id="fmRecvLang" title="받는 채팅 번역">
-          <option value="">번역 끄기</option>
-          <option value="ko">한국어로</option>
-          <option value="en">English</option>
-          <option value="ja">日本語</option>
-          <option value="zh">中文</option>
-          <option value="es">Español</option>
-          <option value="ru">Русский</option>
-        </select>
-        <span class="fm-tr-status" id="fmTrStatus"></span>
-      </span>
+      <span class="fm-toggle" id="fmTrToggle"><span class="dot"></span>번역 OFF</span>
+      <span class="fm-tr-status" id="fmTrStatus"></span>
     </div>
 
     <div class="fm-fab" id="fmFab" style="pointer-events:auto;" title="전체 설정 열기">F<span class="m">M</span></div>
@@ -66,6 +56,12 @@ function buildUI() {
         <span class="ob-skip" id="obSkip">기본값으로 시작할게요</span>
       </div>
     </div>
+
+    <div class="fm-lang-scrim" id="fmLangScrim" style="pointer-events:auto;"></div>
+    <div class="fm-lang-sheet" id="fmLangSheet" style="pointer-events:auto;">
+      <div class="fm-lang-sheet-head" id="fmLangSheetHead"></div>
+      <div class="fm-lang-sheet-list" id="fmLangSheetList"></div>
+    </div>
   `;
 
   els = {
@@ -73,7 +69,11 @@ function buildUI() {
     fmToggle: shadowRoot.getElementById('fmToggle'),
     fmConnDot: shadowRoot.getElementById('fmConnDot'),
     fmConnTxt: shadowRoot.getElementById('fmConnTxt'),
-    fmRecvLang: shadowRoot.getElementById('fmRecvLang'),
+    fmTrToggle: shadowRoot.getElementById('fmTrToggle'),
+    fmLangScrim: shadowRoot.getElementById('fmLangScrim'),
+    fmLangSheet: shadowRoot.getElementById('fmLangSheet'),
+    fmLangSheetHead: shadowRoot.getElementById('fmLangSheetHead'),
+    fmLangSheetList: shadowRoot.getElementById('fmLangSheetList'),
     fmTrStatus: shadowRoot.getElementById('fmTrStatus'),
     fmFab: shadowRoot.getElementById('fmFab'),
     fmBackdrop: shadowRoot.getElementById('fmBackdrop'),
@@ -176,7 +176,12 @@ function syncAllUI() {
     o.classList.toggle('active', o.dataset.mode === settings.displayMode);
   });
 
-  if (els.fmRecvLang) els.fmRecvLang.value = settings.translateRecvTo || '';
+  if (els.fmTrToggle) {
+    const trOn = !!settings.translateRecvTo;
+    els.fmTrToggle.classList.toggle('on', trOn);
+    els.fmTrToggle.classList.toggle('off', !trOn);
+    els.fmTrToggle.innerHTML = `<span class="dot"></span>${trOn ? '번역 ON' : '번역 OFF'}`;
+  }
 
   syncSendBar();
   reclassifyAllVisible();
@@ -189,6 +194,34 @@ function showTrStatus(loaded) {
   els.fmTrStatus.textContent = `언어팩 ${Math.round((loaded || 0) * 100)}%`;
 }
 
+// ---- 언어 선택 바텀시트 (표시 언어[1] / 보낼 언어[3]가 공유하는 컴포넌트) ----
+let _langSheetOnSelect = null;
+let _langSheetTrigger = null;
+
+function openLangSheet({ title, codes, current, onSelect, triggerEl }) {
+  els.fmLangSheetHead.textContent = title;
+  els.fmLangSheetList.innerHTML = codes
+    .map((code) => {
+      const meta = LANG_META[code] || { short: code.toUpperCase(), label: code };
+      return `<div class="fm-lang-item${code === current ? ' selected' : ''}" data-code="${code}">
+        <span class="fm-lang-item-label">${meta.label}</span>
+        <span class="fm-lang-item-check">✓</span>
+      </div>`;
+    })
+    .join('');
+  _langSheetOnSelect = onSelect;
+  _langSheetTrigger = triggerEl || null;
+  if (_langSheetTrigger) _langSheetTrigger.classList.add('active');
+  els.fmLangScrim.classList.add('open');
+  els.fmLangSheet.classList.add('open');
+}
+function closeLangSheet() {
+  els.fmLangScrim.classList.remove('open');
+  els.fmLangSheet.classList.remove('open');
+  if (_langSheetTrigger) _langSheetTrigger.classList.remove('active');
+  _langSheetTrigger = null;
+}
+
 function wireEvents() {
   els.fmToggle.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -197,16 +230,24 @@ function wireEvents() {
     warmupTranslators(settings.translateRecvTo, showTrStatus); // 제스처 보강
   });
 
-  // 받는 채팅 번역 언어 선택 — 이 change 가 user activation → 언어팩 다운로드 허용
-  if (els.fmRecvLang) {
-    els.fmRecvLang.addEventListener('change', () => {
-      const to = els.fmRecvLang.value;
-      saveSettings({ translateRecvTo: to });
+  // 번역 on/off — 켜면 전체 채팅을 한국어로 번역(국가별 분기 전까지는 대상 고정).
+  // 이 click 이 user activation → 언어팩 다운로드 허용
+  if (els.fmTrToggle) {
+    els.fmTrToggle.addEventListener('click', () => {
+      const next = settings.translateRecvTo ? '' : 'ko';
+      saveSettings({ translateRecvTo: next });
       if (els.fmTrStatus) els.fmTrStatus.textContent = '';
-      warmupTranslators(to, showTrStatus);
+      warmupTranslators(next, showTrStatus);
       syncAllUI();
     });
   }
+  if (els.fmLangSheetList) {
+    els.fmLangSheetList.addEventListener('click', (e) => {
+      const item = e.target.closest('.fm-lang-item');
+      if (item && _langSheetOnSelect) _langSheetOnSelect(item.dataset.code);
+    });
+  }
+  if (els.fmLangScrim) els.fmLangScrim.addEventListener('click', closeLangSheet);
 
   // 전체 설정 모달을 여는 진입점은 이 플로팅 버튼 하나뿐이다.
   els.fmFab.addEventListener('click', () => {
@@ -258,13 +299,43 @@ function injectLabelStyle() {
     yt-live-chat-text-message-renderer.fm-blur.fm-revealed::after { display: none; }
     yt-live-chat-text-message-renderer.fm-blur.fm-revealed #message { filter: none !important; };
     .fm-lang { margin-left: 4px; font-size: 0.95em; vertical-align: middle; }
-    #fm-send-bar { display: none; gap: 6px; padding: 6px 10px; background: #0f0f0f; border-top: 1px solid #2a2a2a; align-items: center; }
-    #fm-send-lang { flex: 0 0 auto; background: #222; border: 1px solid #333; border-radius: 8px; color: #fff; padding: 5px 4px; font-size: 11px; outline: none; }
+
+    /* [2] 번역카드 + 필터 태그 (원문 바로 아래, .fm-extra 앵커 안) */
+    .fm-extra { display: block; }
+    .fm-blur:not(.fm-revealed) .fm-extra { display: none; } /* 필터 우선: 원문 공개 전엔 번역카드도 숨김 */
+    .fm-filter-tag { font-size: 10px; color: #B3B3B3; margin: 2px 0; }
+    .fm-tr-card {
+      display: flex; align-items: flex-start; gap: 6px; margin-top: 4px; padding: 6px 10px;
+      background: #181818; border-left: 3px solid #1DB954; border-radius: 0 8px 8px 0;
+      font-size: 12px; color: #fff;
+    }
+    .fm-tr-lang {
+      flex: 0 0 auto; font-size: 10px; font-weight: 700; color: #1DB954;
+      background: rgba(29,185,84,.16); border-radius: 100px; padding: 2px 6px;
+    }
+    .fm-tr-text { flex: 1; line-height: 1.4; }
+    .fm-tr-toggle { flex: 0 0 auto; font-size: 10px; color: #B3B3B3; text-decoration: underline; cursor: pointer; white-space: nowrap; }
+
+    /* [3] 입력창 언어 페어 바 */
+    @keyframes fm-tr-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+    #fm-send-bar { display: none; flex-direction: column; gap: 4px; padding: 6px 10px; background: #0f0f0f; border-top: 1px solid #2a2a2a; }
+    #fm-lang-pair { display: flex; align-items: center; gap: 6px; }
+    .fm-chip {
+      display: inline-flex; align-items: center; gap: 4px; background: #282828; color: #fff;
+      border: 1px solid #2A2A2A; border-radius: 100px; padding: 4px 9px; font-size: 11px; font-weight: 700;
+    }
+    .fm-chip-dst { cursor: pointer; }
+    .fm-chip-caret { color: #B3B3B3; font-size: 9px; }
+    .fm-arrow { color: #B3B3B3; font-size: 12px; padding: 0 2px; }
+    #fm-send-row { display: flex; gap: 6px; align-items: center; }
     #fm-send-input { flex: 1; min-width: 0; background: #222; border: 1px solid #333; border-radius: 100px; color: #fff; padding: 6px 12px; font-size: 12px; outline: none; }
     #fm-send-input::placeholder { color: #888; }
     #fm-send-input:disabled { opacity: 0.5; }
     #fm-send-btn { background: #1DB954; color: #000; border: none; border-radius: 100px; padding: 6px 14px; font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap; }
     #fm-send-btn:disabled { opacity: 0.5; cursor: default; }
+    .fm-tr-preview { font-size: 12px; color: #B3B3B3; background: #181818; border: 1px solid #2A2A2A; border-radius: 10px; padding: 6px 10px; }
+    .fm-tr-preview.loading { color: #727272; animation: fm-tr-pulse 1s ease-in-out infinite; }
+    .fm-tr-preview.error { color: #F5A623; }
   `;
   document.head.appendChild(s);
 }
@@ -303,12 +374,21 @@ const STYLE = `
   @keyframes fm-pulse{0%,100%{opacity:1;}50%{opacity:.25;}}
   .fm-conn-txt{font-size:9.5px;color:var(--fm-text-secondary);white-space:nowrap;}
 
-  .fm-sel-wrap{display:flex;align-items:center;gap:6px;margin-left:auto;}
-  .fm-sel{
-    background:var(--fm-bg-hover);color:#fff;border:1px solid var(--fm-border);
-    border-radius:100px;font-size:10.5px;font-weight:700;padding:3px 6px;cursor:pointer;outline:none;
-  }
+  #fmTrToggle{margin-left:auto;}
   .fm-tr-status{font-size:9.5px;color:var(--fm-text-secondary);white-space:nowrap;}
+
+  .fm-lang-scrim{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:2147483004;display:none;}
+  .fm-lang-scrim.open{display:block;}
+  .fm-lang-sheet{position:fixed;left:0;right:0;bottom:0;background:var(--fm-bg-elevated);
+    border-radius:16px 16px 0 0;z-index:2147483005;padding:10px 0 16px;
+    transform:translateY(100%);transition:transform .2s ease;box-shadow:0 -16px 40px -12px rgba(0,0,0,.6);}
+  .fm-lang-sheet.open{transform:translateY(0);}
+  .fm-lang-sheet-head{font-size:12.5px;font-weight:800;color:#fff;padding:6px 18px 10px;}
+  .fm-lang-item{display:flex;align-items:center;justify-content:space-between;padding:12px 18px;
+    font-size:13px;font-weight:600;color:#fff;cursor:pointer;}
+  .fm-lang-item:active{background:var(--fm-bg-hover);}
+  .fm-lang-item-check{color:var(--fm-accent);font-weight:800;visibility:hidden;}
+  .fm-lang-item.selected .fm-lang-item-check{visibility:visible;}
 
   .fm-fab{
     position:fixed;right:16px;bottom:145px;width:42px;height:42px;border-radius:50%;

@@ -75,40 +75,46 @@ async function getDetector() {
   return _detector;
 }
 
+// 언어 감지 공용 함수 — 수신([2]) 노드별 1회 감지 / 발신([3]) 입력창 실시간 감지 양쪽에서 재사용.
+// 신뢰도 낮거나 너무 짧으면 무시(이모지/짧은 텍스트 오탐 방지) — 임계값은 기존 그대로.
+async function detectLang(text) {
+  if (!text || !text.trim()) return { lang: '', confident: false };
+  const det = await getDetector();
+  if (!det) return { lang: '', confident: false };
+  try {
+    const r = await det.detect(text);
+    const top = r && r[0];
+    if (top && top.confidence >= 0.5 && text.trim().length >= 3) {
+      return { lang: (top.detectedLanguage || '').toLowerCase(), confident: true };
+    }
+  } catch (e) { }
+  return { lang: '', confident: false };
+}
+
 // 언어 감지는 노드당 1회. 번역은 대상 언어(settings.translateRecvTo)별로 캐시.
-// 화면 표시(원문 ↔ 번역문 교체, 국기 배지)는 현재 대상 언어에 맞춰 그때그때 결정.
-async function translateNode(node, messageEl, text) {
+// 화면 표시(원문+번역카드, 국기 배지)는 현재 대상 언어에 맞춰 그때그때 결정.
+async function translateNode(node, messageEl, extraEl, text) {
   if (!settings) return;
   const to = settings.translateRecvTo || '';
   const seen = node.dataset.fmLang !== undefined;
 
-  if (!to) { // 끄기 — 이전에 번역됐던 노드는 원문 복구
-    if (seen) applyTranslationDisplay(node, messageEl);
+  if (!to) { // 끄기 — 이전에 번역됐던 노드는 원문만 노출
+    if (seen) applyTranslationDisplay(node, messageEl, extraEl);
     return;
   }
   if (!text.trim() || node.style.display === 'none') return;
 
   if (!node.dataset.fmOrigText) node.dataset.fmOrigText = text;
 
-  // 언어 감지 (1회) — 신뢰도 낮거나 너무 짧으면 무시 (이모지/짧은 텍스트 오탐 방지)
+  // 언어 감지 (1회)
   if (!seen) {
-    let lang = '';
-    const det = await getDetector();
-    if (det) {
-      try {
-        const r = await det.detect(text);
-        const top = r && r[0];
-        if (top && top.confidence >= 0.5 && text.trim().length >= 3) {
-          lang = (top.detectedLanguage || '').toLowerCase();
-        }
-      } catch (e) { }
-    }
+    const { lang } = await detectLang(text);
     node.dataset.fmLang = lang;
   }
   const lang = node.dataset.fmLang || '';
 
-  if (!lang || lang === to || node.dataset.fmTrSkip) { applyTranslationDisplay(node, messageEl); return; }
-  if (node.dataset.fmTrText && node.dataset.fmTrTo === to) { applyTranslationDisplay(node, messageEl); return; }
+  if (!lang || lang === to || node.dataset.fmTrSkip) { applyTranslationDisplay(node, messageEl, extraEl); return; }
+  if (node.dataset.fmTrText && node.dataset.fmTrTo === to) { applyTranslationDisplay(node, messageEl, extraEl); return; }
 
   const tr = await getTranslator(lang, to);
   if (tr) {
@@ -124,47 +130,87 @@ async function translateNode(node, messageEl, text) {
     node.dataset.fmTrSkip = '1'; // availability=unavailable 확정 → 재시도 안 함
   }
   // 성공 못 했으면 fmProcessed 안 남김 → 다음 reclassifyAllVisible에서 재시도(팩 다운로드 대기)
-  applyTranslationDisplay(node, messageEl);
+  applyTranslationDisplay(node, messageEl, extraEl);
 }
 
-function applyTranslationDisplay(node, messageEl) {
+function applyTranslationDisplay(node, messageEl, extraEl) {
   const to = (settings && settings.translateRecvTo) || '';
   const lang = node.dataset.fmLang || '';
-  const orig = node.dataset.fmOrigText;
   const trg = (node.dataset.fmTrTo === to) ? node.dataset.fmTrText : '';
 
+  // author 옆 국기 배지 — 기존 로직 그대로 유지
   const authorEl = (node.shadowRoot || node).querySelector('#author-name');
-  let badge = authorEl && authorEl.querySelector('.fm-lang');
+  let flagBadge = authorEl && authorEl.querySelector('.fm-lang');
   if (to && lang && lang !== to && authorEl) {
-    if (!badge) {
-      badge = document.createElement('span');
-      badge.className = 'fm-lang';
-      authorEl.appendChild(badge);
+    if (!flagBadge) {
+      flagBadge = document.createElement('span');
+      flagBadge.className = 'fm-lang';
+      authorEl.appendChild(flagBadge);
     }
-    badge.textContent = LANG_FLAG[lang] || lang.toUpperCase();
-    badge.dataset.lang = lang;
-  } else if (badge) {
-    badge.remove();
+    flagBadge.textContent = LANG_FLAG[lang] || lang.toUpperCase();
+    flagBadge.dataset.lang = lang;
+  } else if (flagBadge) {
+    flagBadge.remove();
   }
 
-  if (trg) {
-    if (messageEl.textContent !== trg) messageEl.textContent = trg;
-  } else if (orig != null && messageEl.textContent !== orig) {
-    messageEl.textContent = orig;
+  // 번역카드 — 원문(messageEl.textContent)은 절대 건드리지 않고, 카드를 원문 아래에 추가/갱신
+  let card = extraEl.querySelector('.fm-tr-card');
+  if (!to || !trg) {
+    if (card) card.remove();
+    messageEl.style.display = '';
+    delete node.dataset.fmTrView;
+    return;
+  }
+
+  if (!card) {
+    // #message/.fm-extra가 유튜브 커스텀 엘리먼트의 shadow root 안에 있을 수 있어
+    // 라이트 DOM 스타일시트가 못 미칠 수 있다 — 모양은 inline style로 직접 지정.
+    card = document.createElement('div');
+    card.className = 'fm-tr-card';
+    card.style.cssText = 'display:flex;align-items:flex-start;gap:6px;margin-top:4px;padding:6px 10px;' +
+      'background:#181818;border-left:3px solid #1DB954;border-radius:0 8px 8px 0;font-size:12px;color:#fff;';
+    card.innerHTML = '<span class="fm-tr-lang"></span><span class="fm-tr-text"></span><span class="fm-tr-toggle"></span>';
+    card.querySelector('.fm-tr-lang').style.cssText =
+      'flex:0 0 auto;font-size:10px;font-weight:700;color:#1DB954;background:rgba(29,185,84,.16);border-radius:100px;padding:2px 6px;';
+    card.querySelector('.fm-tr-text').style.cssText = 'flex:1;line-height:1.4;';
+    card.querySelector('.fm-tr-toggle').style.cssText =
+      'flex:0 0 auto;font-size:10px;color:#B3B3B3;text-decoration:underline;cursor:pointer;white-space:nowrap;';
+    extraEl.appendChild(card); // 필터 태그(있으면) 다음 줄
+    card.querySelector('.fm-tr-toggle').addEventListener('click', () => {
+      node.dataset.fmTrView = node.dataset.fmTrView === 'original' ? 'translated' : 'original';
+      renderTrView(node, messageEl, card);
+    });
+  }
+  card.querySelector('.fm-tr-lang').textContent = lang.toUpperCase();
+  card.querySelector('.fm-tr-text').textContent = trg;
+  renderTrView(node, messageEl, card);
+}
+
+// 기본 노출은 번역문, 토글 시 원문 — messageEl과 카드를 서로 배타적으로 표시
+function renderTrView(node, messageEl, card) {
+  const view = node.dataset.fmTrView || 'translated';
+  const toggle = card.querySelector('.fm-tr-toggle');
+  if (view === 'translated') {
+    messageEl.style.display = 'none';
+    card.style.display = '';
+    toggle.textContent = '원문 보기';
+  } else {
+    messageEl.style.display = '';
+    card.style.display = 'none';
+    toggle.textContent = '번역문 보기';
   }
 }
 
-// ---- 송신 번역 (내가 쓴 한국어 → 대상 언어로 변환 후 유튜브 채팅으로 전송) ----
-async function sendTranslated(koText) {
-  const src = (koText || '').trim();
+// ---- 송신 번역 (한국어 → 선택한 상대 언어로 변환 후 유튜브 채팅으로 전송, 단방향) ----
+async function sendTranslated(text, srcLang, dstLang) {
+  const src = (text || '').trim();
   if (!src) return;
 
-  const to = (settings && settings.translateSendTo) || 'en';
   let out = src;
-  if (to !== 'ko') {
-    const tr = await getTranslator('ko', to);
+  if (dstLang && srcLang && dstLang !== srcLang) {
+    const tr = await getTranslator(srcLang, dstLang);
     if (tr) {
-      try { out = await tr.translate(src); } catch (e) { out = src; }
+      try { out = await tr.translate(src); } catch (e) { out = src; } // 실패 시 원문으로 폴백
     }
   }
 
@@ -191,11 +237,13 @@ function syncSendBar() {
   if (!bar) return;
   // 받는 번역이 꺼져 있어도 송신 번역은 독립적으로 쓸 수 있게 함
   bar.style.display = ('Translator' in self) ? 'flex' : 'none';
-  const sel = document.getElementById('fm-send-lang');
-  if (sel && settings) sel.value = settings.translateSendTo || 'en';
 }
 
 let _sendBarTries = 0;
+let _previewTimer = null;
+let _previewSeq = 0;
+const SEND_SRC_LANG = 'ko'; // 소스는 항상 한국어로 고정 (단방향)
+
 function injectSendBar() {
   if (!('Translator' in self)) return;
   if (document.getElementById('fm-send-bar')) return;
@@ -208,32 +256,94 @@ function injectSendBar() {
   const bar = document.createElement('div');
   bar.id = 'fm-send-bar';
   bar.innerHTML =
-    '<select id="fm-send-lang" title="보낼 언어">' +
-    '<option value="en">EN</option><option value="ja">JA</option>' +
-    '<option value="zh">ZH</option><option value="es">ES</option>' +
-    '<option value="ru">RU</option>' +
-    '</select>' +
-    '<input id="fm-send-input" type="text" autocomplete="off" ' +
-    'placeholder="한국어로 입력 → 번역해서 전송 (Enter)" />' +
-    '<button id="fm-send-btn" type="button">번역 전송</button>';
+    '<div id="fm-lang-pair">' +
+    '<span class="fm-chip fm-chip-src">KO</span>' +
+    '<span class="fm-arrow">→</span>' +
+    '<span class="fm-chip fm-chip-dst" id="fmDstChip"><span class="fm-chip-code">EN</span><span class="fm-chip-caret">▾</span></span>' +
+    '</div>' +
+    '<div id="fm-send-row">' +
+    '<input id="fm-send-input" type="text" autocomplete="off" placeholder="메시지를 입력하세요 (자동 번역 후 전송)" />' +
+    '<button id="fm-send-btn" type="button">전송</button>' +
+    '</div>' +
+    '<div class="fm-tr-preview" id="fmTrPreview" style="display:none;"></div>';
   panel.parentNode.insertBefore(bar, panel);
 
-  const sel = bar.querySelector('#fm-send-lang');
+  const dstChipCode = bar.querySelector('#fmDstChip .fm-chip-code');
+  const dstChipEl = bar.querySelector('#fmDstChip');
   const inp = bar.querySelector('#fm-send-input');
   const btn = bar.querySelector('#fm-send-btn');
-  sel.addEventListener('change', () => {
-    saveSettings({ translateSendTo: sel.value });
-    getTranslator('ko', sel.value); // 이 change 도 제스처 → 팩 미리 받기
+  const preview = bar.querySelector('#fmTrPreview');
+
+  let dstLang = (settings && settings.translateSendTo) || 'en';
+  dstChipCode.textContent = (LANG_META[dstLang] || {}).short || dstLang.toUpperCase();
+
+  function setDst(code) {
+    dstLang = code;
+    dstChipCode.textContent = (LANG_META[code] || {}).short || code.toUpperCase();
+    saveSettings({ translateSendTo: code });
+    getTranslator(SEND_SRC_LANG, code); // 클릭 제스처 컨텍스트 → 언어팩 미리 받기
+    schedulePreview(inp.value);
+  }
+
+  dstChipEl.addEventListener('click', () => {
+    openLangSheet({ // fm-ui.js 공유 헬퍼 재사용
+      title: '보낼 언어',
+      codes: SEND_LANG_CODES,
+      current: dstLang,
+      triggerEl: dstChipEl,
+      onSelect: (code) => { setDst(code); closeLangSheet(); }
+    });
   });
+
+  function schedulePreview(text) {
+    clearTimeout(_previewTimer);
+    if (!text.trim()) { preview.style.display = 'none'; return; }
+    _previewTimer = setTimeout(() => runPreview(text), 400);
+  }
+
+  async function runPreview(text) {
+    const seq = ++_previewSeq;
+    if (dstLang === SEND_SRC_LANG) { // 원문 그대로 전송 — 번역 불필요(실패 아님)
+      preview.style.display = '';
+      preview.className = 'fm-tr-preview';
+      preview.textContent = text;
+      return;
+    }
+    preview.style.display = '';
+    preview.className = 'fm-tr-preview loading';
+    preview.textContent = '번역 중···';
+    const tr = await getTranslator(SEND_SRC_LANG, dstLang);
+    if (seq !== _previewSeq) return; // 늦게 도착한 응답 무시
+    if (!tr) {
+      preview.className = 'fm-tr-preview error';
+      preview.textContent = '번역 실패, 원문으로 전송됩니다';
+      return;
+    }
+    try {
+      const out = await tr.translate(text);
+      if (seq !== _previewSeq) return;
+      preview.className = 'fm-tr-preview';
+      preview.textContent = out;
+    } catch (e) {
+      if (seq !== _previewSeq) return;
+      preview.className = 'fm-tr-preview error';
+      preview.textContent = '번역 실패, 원문으로 전송됩니다';
+    }
+  }
+
+  inp.addEventListener('input', () => schedulePreview(inp.value));
+
   const go = async () => {
     const v = inp.value;
     if (!v.trim()) return;
     inp.value = '';
+    preview.style.display = 'none';
     inp.disabled = true; btn.disabled = true;
-    try { await sendTranslated(v); }
+    try { await sendTranslated(v, SEND_SRC_LANG, dstLang); }
     finally { inp.disabled = false; btn.disabled = false; inp.focus(); }
   };
   inp.addEventListener('keydown', (e) => {
+    if (e.isComposing || e.keyCode === 229) return;
     if (e.key === 'Enter') { e.preventDefault(); go(); }
   });
   btn.addEventListener('click', go);

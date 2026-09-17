@@ -33,6 +33,19 @@ const BLUR_LABEL = {
   c05: '이 채팅은 도배로 분류되었습니다.'
 };
 
+// 번역 관련 기능([2] 채팅 번역카드 / [3] 입력창 상대 언어)이 공유하는 언어 메타데이터
+const LANG_META = {
+  '': { short: 'KO', label: '한국어 (원문 그대로)' },
+  ko: { short: 'KO', label: '한국어' },
+  en: { short: 'EN', label: 'English' },
+  ja: { short: 'JA', label: '日本語' },
+  zh: { short: 'ZH', label: '中文' },
+  es: { short: 'ES', label: 'Español' },
+  ru: { short: 'RU', label: 'Русский' }
+};
+// [3] 입력창 상대 언어(번역 대상) 목록 — 'ko'는 번역 없이 원문 그대로 전송(되돌리기용)
+const SEND_LANG_CODES = ['ko', 'en', 'ja', 'zh', 'es', 'ru'];
+
 // 채팅 텍스트 비교용 정규화(공백 정리). fm-filter.js classify(), fm-socket.js connectBackend() 양쪽에서 씀.
 const norm = (s) => (s || '').trim().replace(/\s+/g, ' ');
 

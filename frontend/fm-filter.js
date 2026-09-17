@@ -42,13 +42,21 @@ function extractMessage(node) {
   const authorEl = root.querySelector('#author-name');
   const messageEl = root.querySelector('#message');
   if (!messageEl) return null;
-  return { authorEl, messageEl };
+
+  // 필터 태그와 번역카드가 공유하는 고정 앵커. 재분류/노드 재활용 시에도 중복 생성되지 않음.
+  let extraEl = messageEl.nextElementSibling;
+  if (!extraEl || !extraEl.classList.contains('fm-extra')) {
+    extraEl = document.createElement('div');
+    extraEl.className = 'fm-extra';
+    messageEl.parentNode.insertBefore(extraEl, messageEl.nextSibling);
+  }
+  return { authorEl, messageEl, extraEl };
 }
 
 function applyFilterToNode(node) {
   const parsed = extractMessage(node);
   if (!parsed) return;
-  const { messageEl } = parsed;
+  const { messageEl, extraEl } = parsed;
   // 번역으로 본문이 교체됐을 수 있으므로 분류·매칭은 항상 원문 기준
   const text = node.dataset.fmOrigText || messageEl.textContent || '';
   const category = classify(text);
@@ -58,10 +66,15 @@ function applyFilterToNode(node) {
   delete node.dataset.fmLabel;
   messageEl.style.filter = '';
   node.style.display = '';
+  // .fm-extra는 #message와 함께 유튜브 커스텀 엘리먼트의 shadow root 안에 있을 수 있어
+  // 라이트 DOM 스타일시트(injectLabelStyle)가 못 미칠 수 있다 — 표시 여부는 inline style로 직접 제어.
+  extraEl.style.display = '';
 
-  translateNode(node, messageEl, text); // fm-translate.js
+  translateNode(node, messageEl, extraEl, text); // fm-translate.js
 
   if (!settings.filterEnabled || !category || !settings.categories[category]) {
+    const oldTag = extraEl.querySelector('.fm-filter-tag');
+    if (oldTag) oldTag.remove();
     return; // Normal이거나, 필터가 꺼져 있거나, 해당 카테고리가 OFF면 그대로 노출
   }
 
@@ -71,11 +84,25 @@ function applyFilterToNode(node) {
     messageEl.style.filter = 'blur(4px)';
     node.style.cursor = 'pointer';
     // 사용자가 클릭해서 열어둔 상태는 재분류 후에도 유지
-    if (node.dataset.fmRevealed === '1') node.classList.add('fm-revealed');
+    const revealed = node.dataset.fmRevealed === '1';
+    if (revealed) node.classList.add('fm-revealed');
+    // 필터 우선: 원문을 직접 공개(revealed)하기 전까지는 번역카드/필터태그도 함께 숨김
+    extraEl.style.display = revealed ? '' : 'none';
     node.onclick = () => {
       node.classList.toggle('fm-revealed');
-      node.dataset.fmRevealed = node.classList.contains('fm-revealed') ? '1' : '0';
+      const nowRevealed = node.classList.contains('fm-revealed');
+      node.dataset.fmRevealed = nowRevealed ? '1' : '0';
+      extraEl.style.display = nowRevealed ? '' : 'none';
     };
+
+    let tag = extraEl.querySelector('.fm-filter-tag');
+    if (!tag) {
+      tag = document.createElement('div');
+      tag.className = 'fm-filter-tag';
+      tag.style.cssText = 'font-size:10px;color:#B3B3B3;margin:2px 0;';
+      extraEl.insertBefore(tag, extraEl.firstChild); // 번역카드보다 항상 위 줄
+    }
+    tag.textContent = '🚫 ' + ((CATEGORY_META[category] && CATEGORY_META[category].label) || '');
   } else {
     node.style.display = 'none';
   }
