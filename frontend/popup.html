@@ -22,40 +22,40 @@
 
   <div class="tp-body">
     <div class="tp-panel active" id="tp-mychat">
-      <span class="tp-chip" id="chipFilterState"><span class="d"></span>AI 필터 ON</span>
-      <div class="tp-sublabel">필터링된 메시지 표시 방식</div>
+      <span class="tp-chip" id="chipFilterState"><span class="d"></span></span>
+      <div class="tp-sublabel" data-i18n="mychat_sublabel">필터링된 메시지 표시 방식</div>
       <div class="mode-toggle" id="modeToggle">
-        <div class="mode-opt blur active" data-mode="blur"><span class="d"></span>블러</div>
-        <div class="mode-opt block" data-mode="block"><span class="d"></span>차단</div>
+        <div class="mode-opt blur active" data-mode="blur"><span class="d"></span><span data-i18n="mode_blur_short">블러</span></div>
+        <div class="mode-opt block" data-mode="block"><span class="d"></span><span data-i18n="mode_block_short">차단</span></div>
       </div>
-      <p class="tp-note">채팅 페이지를 열어두면 유튜브 라이브 채팅에 바로 반영됩니다. 채팅 번역은 채팅창 위 바에서 켤 수 있어요.</p>
+      <p class="tp-note" data-i18n="mychat_note">채팅 페이지를 열어두면 유튜브 라이브 채팅에 바로 반영됩니다. 채팅 번역은 채팅창 위 바에서 켤 수 있어요.</p>
     </div>
 
     <div class="tp-panel" id="tp-filter">
       <div class="tp-row">
         <div>
-          <div class="l">욕설 / 비속어</div>
+          <div class="l" data-i18n="cat_profanity">욕설 / 비속어</div>
           <div class="d">Profanity</div>
         </div>
         <div class="mini-switch on" data-cat="c02"></div>
       </div>
       <div class="tp-row">
         <div>
-          <div class="l">정치 관련 대화</div>
+          <div class="l" data-i18n="cat_political">정치 관련 대화</div>
           <div class="d">Political</div>
         </div>
         <div class="mini-switch on" data-cat="c03"></div>
       </div>
       <div class="tp-row">
         <div>
-          <div class="l">성적 표현</div>
+          <div class="l" data-i18n="cat_sexual">성적 표현</div>
           <div class="d">Sexual</div>
         </div>
         <div class="mini-switch on" data-cat="c04"></div>
       </div>
       <div class="tp-row">
         <div>
-          <div class="l">도배 / 반복</div>
+          <div class="l" data-i18n="cat_spam">도배 / 반복</div>
           <div class="d">Spam</div>
         </div>
         <div class="mini-switch on" data-cat="c05"></div>
@@ -63,22 +63,31 @@
     </div>
 
     <div class="tp-panel" id="tp-settings">
-      <div class="tp-sublabel">필터 상태</div>
+      <div class="tp-sublabel" data-i18n="settings_filter_state_sublabel">필터 상태</div>
       <div class="tp-row">
         <div>
-          <div class="l">FILTERME 켜기</div>
-          <div class="d">라이브 채팅에 필터를 적용해요</div>
+          <div class="l" data-i18n="settings_enable_title">FILTERME 켜기</div>
+          <div class="d" data-i18n="settings_enable_desc">라이브 채팅에 필터를 적용해요</div>
         </div>
         <div class="mini-switch on" id="filterEnabledSwitch"></div>
       </div>
-      <div class="tp-sublabel">플랫폼</div>
+      <div class="tp-sublabel" data-i18n="settings_platform_sublabel">플랫폼</div>
       <div class="platform-logos">
         <img src="icons/platforms/newyoutube.png" alt="YouTube" />
       </div>
-      <div class="privacy-note">채팅 기록은 저장하지 않습니다. 필터 기준만 이 브라우저에 저장돼요.</div>
+      <div class="tp-sublabel" data-i18n="settings_country_sublabel">국가 / 언어</div>
+      <div class="tp-row">
+        <div>
+          <div class="l" data-i18n="settings_country_change_title">국가·언어 변경</div>
+          <div class="d" data-i18n="settings_country_change_desc">선택한 국가에 따라 화면 언어와 번역 기본값이 바뀌어요.</div>
+        </div>
+        <div class="tp-arrow" id="changeCountryBtn">›</div>
+      </div>
+      <div class="privacy-note" data-i18n="settings_privacy_note">채팅 기록은 저장하지 않습니다. 필터 기준만 이 브라우저에 저장돼요.</div>
     </div>
   </div>
 
+  <script src="fm-i18n.js"></script>
   <script src="popup.js"></script>
 </body>
 

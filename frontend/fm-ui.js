@@ -23,13 +23,13 @@ function buildUI() {
     <div class="fm-strip" id="fmStrip" style="pointer-events:auto;">
       <span class="fm-conn-dot connecting" id="fmConnDot"></span>
       <span class="fm-mark">F<span>M</span></span>
-      <span class="fm-toggle" id="fmToggle"><span class="dot"></span>필터 ON</span>
+      <span class="fm-toggle" id="fmToggle"><span class="dot"></span></span>
       <span class="fm-conn-txt" id="fmConnTxt"></span>
-      <span class="fm-toggle" id="fmTrToggle"><span class="dot"></span>번역 OFF</span>
+      <span class="fm-toggle" id="fmTrToggle"><span class="dot"></span></span>
       <span class="fm-tr-status" id="fmTrStatus"></span>
     </div>
 
-    <div class="fm-fab" id="fmFab" style="pointer-events:auto;" title="전체 설정 열기">F<span class="m">M</span></div>
+    <div class="fm-fab" id="fmFab" style="pointer-events:auto;">F<span class="m">M</span></div>
 
     <div class="fm-backdrop" id="fmBackdrop" style="pointer-events:auto;"></div>
 
@@ -45,15 +45,24 @@ function buildUI() {
     </div>
 
     <div class="fm-onboard" id="fmOnboard" style="pointer-events:auto;">
-      <div class="ob-head">
-        <span class="ob-badge">✨ 처음 실행하셨네요</span>
-        <h2>어떤 채팅을 걸러낼지<br>먼저 정해주세요</h2>
-        <p>채팅을 보여드리기 전에, 걸러낼 항목을 먼저 골라주세요. 언제든 다시 바꿀 수 있어요.</p>
+      <div class="ob-step" id="obStepCountry">
+        <div class="ob-head">
+          <h2>${t('country_select_title')}</h2>
+          <p>${t('country_select_desc')}</p>
+        </div>
+        <div class="ob-country-list" id="obCountryList"></div>
       </div>
-      <div class="ob-body" id="obBody"></div>
-      <div class="ob-footer">
-        <button class="ob-cta" id="obApply">적용하고 채팅 보기</button>
-        <span class="ob-skip" id="obSkip">기본값으로 시작할게요</span>
+      <div class="ob-step" id="obStepCategory">
+        <div class="ob-head">
+          <span class="ob-badge" id="obBadge"></span>
+          <h2 id="obTitle"></h2>
+          <p id="obDesc"></p>
+        </div>
+        <div class="ob-body" id="obBody"></div>
+        <div class="ob-footer">
+          <button class="ob-cta" id="obApply"></button>
+          <span class="ob-skip" id="obSkip"></span>
+        </div>
       </div>
     </div>
 
@@ -81,6 +90,12 @@ function buildUI() {
     fmModalClose: shadowRoot.getElementById('fmModalClose'),
     fmModalFrame: shadowRoot.getElementById('fmModalFrame'),
     fmOnboard: shadowRoot.getElementById('fmOnboard'),
+    obStepCountry: shadowRoot.getElementById('obStepCountry'),
+    obStepCategory: shadowRoot.getElementById('obStepCategory'),
+    obCountryList: shadowRoot.getElementById('obCountryList'),
+    obBadge: shadowRoot.getElementById('obBadge'),
+    obTitle: shadowRoot.getElementById('obTitle'),
+    obDesc: shadowRoot.getElementById('obDesc'),
     obBody: shadowRoot.getElementById('obBody'),
     obApply: shadowRoot.getElementById('obApply'),
     obSkip: shadowRoot.getElementById('obSkip')
@@ -89,13 +104,52 @@ function buildUI() {
   // popup.html을 그대로 불러온다. chrome.runtime.getURL은 content script에서도 사용 가능.
   els.fmModalFrame.src = chrome.runtime.getURL('popup.html');
 
-  renderOnboardCategories();
+  renderCountryOptions();
   wireEvents();
   syncAllUI();
 
   if (!settings.onboarded) {
     els.fmOnboard.classList.add('show');
   }
+}
+
+// ---- 국가 선택 (온보딩 0단계) ----
+// 카드 목록 자체(국기+국가명)는 언어와 무관하게 고정이라 한 번만 렌더링한다.
+function renderCountryOptions() {
+  els.obCountryList.innerHTML = Object.entries(COUNTRY_META)
+    .map(
+      ([code, meta]) => `
+      <div class="ob-country-card" data-code="${code}">
+        <span class="ob-country-flag">${meta.flag}</span>
+        <span class="ob-country-label">${meta.label}</span>
+      </div>`
+    )
+    .join('');
+
+  els.obCountryList.querySelectorAll('.ob-country-card').forEach((card) => {
+    card.addEventListener('click', () => {
+      applyCountry(card.dataset.code);
+      syncAllUI();
+    });
+  });
+}
+
+// settings.country 유무에 따라 국가 선택 단계 / 카테고리 온보딩 단계를 전환
+function showOnboardStep() {
+  if (!els.obStepCountry) return;
+  els.obStepCountry.classList.toggle('active', !settings.country);
+  els.obStepCategory.classList.toggle('active', !!settings.country);
+}
+
+// 온보딩 안의 정적 문구(배지/제목/설명/버튼)와 카테고리 목록을 현재 언어로 다시 그림
+function applyOnboardTexts() {
+  if (!els.obBadge) return;
+  els.obBadge.textContent = '✨ ' + t('ob_badge');
+  els.obTitle.innerHTML = t('ob_title');
+  els.obDesc.textContent = t('ob_desc');
+  els.obApply.textContent = t('ob_apply');
+  els.obSkip.textContent = t('ob_skip');
+  renderOnboardCategories();
 }
 
 // ---- 전체 설정 모달 (플로팅 로고 버튼 클릭 시 그 자리에서 바로 열림) ----
@@ -117,8 +171,14 @@ window.addEventListener('message', (e) => {
     els.fmModalFrame.style.height = Math.max(e.data.height, 120) + 'px';
   }
   if (e.data.action === 'close') {
-    closeModal();
-    els.fmOnboard.classList.add('show');
+    // 팝업(iframe)이 방금 저장한 값이 storage.onChanged로 이 컨텍스트에 반영되기 전에
+    // 도착할 수 있으므로, 온보딩을 다시 띄우기 전에 최신값을 한 번 직접 읽어온다.
+    chrome.storage.local.get(['country', 'onboarded'], (fresh) => {
+      Object.assign(settings, fresh);
+      closeModal();
+      syncAllUI();
+      els.fmOnboard.classList.add('show');
+    });
   }
 });
 
@@ -129,15 +189,15 @@ function renderOnboardCategories() {
       .map(
         ([key, meta]) => `
       <div class="ob-cat">
-        <div><div class="ob-cat-title">${meta.label}</div><div class="ob-cat-desc">${meta.name}</div></div>
+        <div><div class="ob-cat-title">${catLabel(key)}</div><div class="ob-cat-desc">${meta.name}</div></div>
         <div class="ob-switch" data-cat="${key}"></div>
       </div>`
       )
       .join('') +
-    `<div class="ob-section-label">걸러낸 메시지는 어떻게 보여줄까요</div>
+    `<div class="ob-section-label">${t('ob_display_label')}</div>
      <div class="fm-mode-toggle" id="obModeToggle">
-        <div class="fm-mode-opt blur" data-mode="blur">블러 처리</div>
-        <div class="fm-mode-opt block" data-mode="block">완전 차단</div>
+        <div class="fm-mode-opt blur" data-mode="blur">${t('mode_blur')}</div>
+        <div class="fm-mode-opt block" data-mode="block">${t('mode_block')}</div>
      </div>`;
 
   els.obBody.querySelectorAll('.ob-switch').forEach((sw) => {
@@ -162,9 +222,13 @@ function renderOnboardCategories() {
 function syncAllUI() {
   if (!els.fmToggle) return;
 
+  els.fmFab.title = t('open_settings_title');
+  showOnboardStep();
+  applyOnboardTexts();
+
   els.fmToggle.classList.toggle('on', settings.filterEnabled);
   els.fmToggle.classList.toggle('off', !settings.filterEnabled);
-  els.fmToggle.innerHTML = `<span class="dot"></span>${settings.filterEnabled ? '필터 ON' : '필터 OFF'}`;
+  els.fmToggle.innerHTML = `<span class="dot"></span>${settings.filterEnabled ? t('filter_on') : t('filter_off')}`;
   els.fmStrip.classList.toggle('disabled', !settings.filterEnabled);
 
   els.obBody.querySelectorAll('.ob-switch[data-cat]').forEach((sw) => {
@@ -180,10 +244,11 @@ function syncAllUI() {
     const trOn = !!settings.translateRecvTo;
     els.fmTrToggle.classList.toggle('on', trOn);
     els.fmTrToggle.classList.toggle('off', !trOn);
-    els.fmTrToggle.innerHTML = `<span class="dot"></span>${trOn ? '번역 ON' : '번역 OFF'}`;
+    els.fmTrToggle.innerHTML = `<span class="dot"></span>${trOn ? t('translate_on') : t('translate_off')}`;
   }
 
   syncSendBar();
+  refreshSendBarLangs();
   reclassifyAllVisible();
 }
 
@@ -191,7 +256,7 @@ function syncAllUI() {
 function showTrStatus(loaded) {
   if (!els.fmTrStatus) return;
   if (loaded >= 1) { els.fmTrStatus.textContent = ''; return; }
-  els.fmTrStatus.textContent = `언어팩 ${Math.round((loaded || 0) * 100)}%`;
+  els.fmTrStatus.textContent = t('lang_pack_progress', { pct: Math.round((loaded || 0) * 100) });
 }
 
 // ---- 언어 선택 바텀시트 (표시 언어[1] / 보낼 언어[3]가 공유하는 컴포넌트) ----
@@ -234,7 +299,7 @@ function wireEvents() {
   // 이 click 이 user activation → 언어팩 다운로드 허용
   if (els.fmTrToggle) {
     els.fmTrToggle.addEventListener('click', () => {
-      const next = settings.translateRecvTo ? '' : 'ko';
+      const next = settings.translateRecvTo ? '' : (settings.uiLang || 'ko');
       saveSettings({ translateRecvTo: next });
       if (els.fmTrStatus) els.fmTrStatus.textContent = '';
       warmupTranslators(next, showTrStatus);
@@ -427,6 +492,13 @@ const STYLE = `
     position:fixed;inset:0;background:var(--fm-bg);z-index:2147483003;display:none;flex-direction:column; /* 최상단: 모달/스트립보다 위 */
   }
   .fm-onboard.show{display:flex;}
+  .ob-step{display:none;flex-direction:column;flex:1;min-height:0;}
+  .ob-step.active{display:flex;}
+  .ob-country-list{flex:1;overflow-y:auto;padding:6px 20px 20px;}
+  .ob-country-card{display:flex;align-items:center;gap:10px;padding:13px 12px;border:1px solid var(--fm-border);border-radius:12px;margin-bottom:8px;cursor:pointer;}
+  .ob-country-card:active{background:var(--fm-bg-hover);}
+  .ob-country-flag{font-size:20px;}
+  .ob-country-label{font-size:13.5px;font-weight:700;color:#fff;}
   .ob-head{padding:22px 20px 4px;}
   .ob-badge{display:inline-flex;font-size:10.5px;font-weight:800;color:var(--fm-accent);background:var(--fm-accent-bg);padding:4px 10px;border-radius:100px;margin-bottom:12px;}
   .ob-head h2{font-size:17px;font-weight:800;margin:0 0 6px;color:#fff;line-height:1.4;}

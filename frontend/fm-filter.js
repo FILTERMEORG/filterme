@@ -80,7 +80,7 @@ function applyFilterToNode(node) {
 
   if (settings.displayMode === 'blur') {
     node.classList.add('fm-blur');
-    node.dataset.fmLabel = BLUR_LABEL[category] || '이 채팅은 필터되었습니다.';
+    node.dataset.fmLabel = blurLabel(category);
     messageEl.style.filter = 'blur(4px)';
     node.style.cursor = 'pointer';
     // 사용자가 클릭해서 열어둔 상태는 재분류 후에도 유지
@@ -102,7 +102,7 @@ function applyFilterToNode(node) {
       tag.style.cssText = 'font-size:10px;color:#B3B3B3;margin:2px 0;';
       extraEl.insertBefore(tag, extraEl.firstChild); // 번역카드보다 항상 위 줄
     }
-    tag.textContent = '🚫 ' + ((CATEGORY_META[category] && CATEGORY_META[category].label) || '');
+    tag.textContent = '🚫 ' + catLabel(category);
   } else {
     node.style.display = 'none';
   }

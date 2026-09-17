@@ -1,4 +1,5 @@
 const DEFAULTS = {
+  uiLang: 'ko',
   onboarded: false,
   filterEnabled: true,
   categories: { c02: true, c03: true, c04: true, c05: true },
@@ -40,13 +41,19 @@ if (window.parent !== window && 'ResizeObserver' in window) {
   new ResizeObserver(reportHeightToParent).observe(document.body);
 }
 
+function applyI18n() {
+  document.querySelectorAll('[data-i18n]').forEach((el) => {
+    el.textContent = t(el.dataset.i18n);
+  });
+}
+
 function render() {
   try {
     // My Chat 탭
     const chip = $('chipFilterState');
     if (chip) {
       chip.classList.toggle('off', !settings.filterEnabled);
-      chip.innerHTML = `<span class="d"></span>AI 필터 ${settings.filterEnabled ? 'ON' : 'OFF'}`;
+      chip.innerHTML = `<span class="d"></span>${settings.filterEnabled ? t('mychat_ai_on') : t('mychat_ai_off')}`;
     }
 
     document.querySelectorAll('.mode-opt').forEach((o) => {
@@ -93,6 +100,7 @@ try {
         return;
       }
       settings = data;
+      applyI18n();
       render();
       reportHeightToParent();
     });
@@ -100,6 +108,16 @@ try {
 } catch (err) {
   showFatalError(err.message);
 }
+
+// 인페이지 모달의 iframe은 열고 닫을 때마다 새로 로드되지 않고 최초 1회만 로드된 채 재사용된다.
+// 그래서 콘텐츠 스크립트 쪽(국가 재선택 온보딩 등)에서 설정이 바뀌어도 이 팝업은 스스로 알 수 없다 —
+// storage 변경을 직접 구독해서 항상 최신 상태를 반영하도록 한다.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local') return;
+  Object.keys(changes).forEach((key) => { settings[key] = changes[key].newValue; });
+  applyI18n();
+  render();
+});
 
 // 탭 전환
 document.querySelectorAll('.tp-tab').forEach((tab) => {
@@ -129,6 +147,21 @@ const filterEnabledSwitchEl = $('filterEnabledSwitch');
 if (filterEnabledSwitchEl) {
   filterEnabledSwitchEl.addEventListener('click', () => {
     save({ filterEnabled: !settings.filterEnabled });
+  });
+}
+
+// 국가·언어 변경 — 카테고리 설정/필터 on-off 등 다른 설정은 그대로 두고 country만 초기화
+const changeCountryBtnEl = $('changeCountryBtn');
+if (changeCountryBtnEl) {
+  changeCountryBtnEl.addEventListener('click', () => {
+    save({ country: '' });
+    if (window.parent !== window) {
+      // content.js의 인페이지 모달 안에 있을 때는 window.close()가 아무 효과가 없으므로
+      // 부모(content.js)에게 모달을 닫아달라고 요청한다(국가 선택 단계부터 다시 시작).
+      window.parent.postMessage({ source: 'filterme-popup', action: 'close' }, '*');
+    } else {
+      window.close();
+    }
   });
 }
 
