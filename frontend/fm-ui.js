@@ -30,7 +30,13 @@ function buildUI() {
       <span class="fm-tr-status" id="fmTrStatus"></span>
     </div>
 
-    <div class="fm-fab" id="fmFab" style="pointer-events:auto;">F<span class="m">M</span></div>
+    <div class="fm-fab" id="fmFab" style="pointer-events:auto;">
+      F<span class="m">M</span>
+      <div class="fm-fab-tip">
+        <b class="fm-fab-tip-label"></b>
+        <span class="fm-fab-tip-desc"></span>
+      </div>
+    </div>
 
     <div class="fm-backdrop" id="fmBackdrop" style="pointer-events:auto;"></div>
 
@@ -234,6 +240,12 @@ function syncAllUI() {
   if (!els.fmToggle) return;
 
   els.fmFab.title = t('mgr_open_title');
+  {
+    const tipLabel = els.fmFab.querySelector('.fm-fab-tip-label');
+    const tipDesc = els.fmFab.querySelector('.fm-fab-tip-desc');
+    if (tipLabel) tipLabel.textContent = t('fab_tip_label');
+    if (tipDesc) tipDesc.textContent = t('fab_tip_desc');
+  }
   if (els.fmGear) els.fmGear.title = t('settings_gear_title');
   showOnboardStep();
   applyOnboardTexts();
@@ -328,9 +340,9 @@ function wireEvents() {
   }
   if (els.fmLangScrim) els.fmLangScrim.addEventListener('click', closeLangSheet);
 
-  // FAB는 AI 매니저 패널을, 스트립의 톱니바퀴는 전체 설정 모달을 연다.
+  // FAB는 AI 매니저 패널을 토글(열려있으면 닫기)하고, 스트립의 톱니바퀴는 전체 설정 모달을 연다.
   els.fmFab.addEventListener('click', () => {
-    openManagerPanel(); // fm-manager.js
+    toggleManagerPanel(); // fm-manager.js
     warmupTranslators(settings.translateRecvTo, showTrStatus); // 제스처 보강
   });
   if (els.fmGear) {
@@ -475,16 +487,40 @@ const STYLE = `
   .fm-lang-item-check{color:var(--fm-accent);font-weight:800;visibility:hidden;}
   .fm-lang-item.selected .fm-lang-item-check{visibility:visible;}
 
-  .fm-gear{font-size:12px;color:var(--fm-text-secondary);cursor:pointer;font-style:normal;margin-left:2px;}
-  .fm-gear:hover{color:#fff;}
+  .fm-gear{
+    font-size:15px;color:rgba(255,255,255,.65);cursor:pointer;font-style:normal;
+    padding:4px 6px;border-radius:6px;line-height:1;
+  }
+  .fm-gear:hover{color:#fff;background:var(--fm-bg-hover);}
 
+  @keyframes fm-fab-pulse {
+    0%, 100% { box-shadow: 0 6px 16px -4px rgba(0,0,0,.6), 0 0 0 0 rgba(127,119,221,.55); }
+    50% { box-shadow: 0 6px 16px -4px rgba(0,0,0,.6), 0 0 0 6px rgba(127,119,221,0); }
+  }
   .fm-fab{
     position:fixed;right:16px;bottom:145px;width:42px;height:42px;border-radius:50%;
     background:#000;color:#fff;display:flex;align-items:center;justify-content:center;
-    font-size:11px;font-weight:800;cursor:pointer;box-shadow:0 6px 16px -4px rgba(0,0,0,.6);z-index:2147483000; /* base */
+    font-size:11px;font-weight:800;cursor:pointer;z-index:2147483000; /* base */
     border:2px solid #7F77DD;
+    animation:fm-fab-pulse 2.4s ease-in-out infinite; /* 은은한 상시 펄스 — 호버 없이도 신호 */
   }
-  .fm-fab .m{color:var(--fm-accent);}
+  .fm-fab-tip{
+    position:absolute;right:52px;bottom:2px;width:168px;
+    background:#1B1830;border:1px solid #7F77DD;border-radius:10px;
+    padding:9px 11px;box-shadow:0 10px 26px -10px rgba(0,0,0,.7);
+    opacity:0;transform:translateX(6px);pointer-events:none;
+    transition:opacity .15s ease, transform .15s ease;
+    text-align:left;
+  }
+  .fm-fab-tip-label{display:block;font-size:11.5px;font-weight:800;color:#fff;margin-bottom:2px;}
+  .fm-fab-tip-desc{display:block;font-size:10.5px;color:var(--fm-text-secondary);line-height:1.4;font-weight:400;}
+  .fm-fab-tip::after{
+    content:"";position:absolute;right:-5px;bottom:16px;width:8px;height:8px;
+    background:#1B1830;border-right:1px solid #7F77DD;border-bottom:1px solid #7F77DD;
+    transform:rotate(-45deg);
+  }
+  .fm-fab:hover .fm-fab-tip{opacity:1;transform:translateX(0);}
+  .fm-fab .m{color:#7F77DD;} /* AI 매니저 패널 헤더 로고(.fm-mgr-avatar span)와 동일한 색 */
 
   /* ---- AI 매니저 FILTERME: 독립 플로팅 패널(백드롭 없음, FAB 클릭 시 바로 열림) ---- */
   .fm-mgr-panel{
@@ -497,8 +533,11 @@ const STYLE = `
   .fm-mgr-avatar{font-size:12px;font-weight:800;color:#fff;}
   .fm-mgr-avatar span{color:#7F77DD;}
   .fm-mgr-title{font-size:12.5px;font-weight:800;color:#fff;flex:1;}
-  .fm-mgr-refresh,.fm-mgr-close{cursor:pointer;color:var(--fm-text-secondary);font-size:13px;font-style:normal;margin-left:6px;}
-  .fm-mgr-refresh:hover,.fm-mgr-close:hover{color:#fff;}
+  .fm-mgr-refresh,.fm-mgr-close{
+    cursor:pointer;color:rgba(255,255,255,.65);font-size:16px;font-style:normal;
+    margin-left:4px;padding:4px 6px;border-radius:6px;line-height:1;
+  }
+  .fm-mgr-refresh:hover,.fm-mgr-close:hover{color:#fff;background:var(--fm-bg-hover);}
   .fm-mgr-tabs{display:flex;border-bottom:1px solid var(--fm-border);}
   .fm-mgr-tab{flex:1;text-align:center;padding:9px 0;font-size:11.5px;font-weight:700;color:var(--fm-text-secondary);cursor:pointer;border-bottom:2px solid transparent;}
   .fm-mgr-tab.active{color:#fff;border-bottom-color:#7F77DD;}

@@ -80,7 +80,9 @@ const I18N = {
     mgr_cat_sexual: '성적',
     mgr_cat_spam: '도배',
     mgr_open_title: 'AI 매니저 열기',
-    settings_gear_title: '전체 설정'
+    settings_gear_title: '전체 설정',
+    fab_tip_label: 'AI 매니저',
+    fab_tip_desc: '방송 요약 · 채팅 분위기 확인'
   },
   en: {
     ob_badge: 'Welcome, first time here',
@@ -147,7 +149,9 @@ const I18N = {
     mgr_cat_sexual: 'Sexual',
     mgr_cat_spam: 'Spam',
     mgr_open_title: 'Open AI Manager',
-    settings_gear_title: 'All settings'
+    settings_gear_title: 'All settings',
+    fab_tip_label: 'AI Manager',
+    fab_tip_desc: 'Stream summary & chat mood'
   },
   ja: {
     ob_badge: '初めてのご利用ですね',
@@ -214,7 +218,9 @@ const I18N = {
     mgr_cat_sexual: '性的',
     mgr_cat_spam: '荒らし',
     mgr_open_title: 'AIマネージャーを開く',
-    settings_gear_title: 'すべての設定'
+    settings_gear_title: 'すべての設定',
+    fab_tip_label: 'AIマネージャー',
+    fab_tip_desc: '配信要約・チャットの雰囲気を確認'
   },
   zh: {
     ob_badge: '欢迎首次使用',
@@ -281,7 +287,9 @@ const I18N = {
     mgr_cat_sexual: '性暗示',
     mgr_cat_spam: '刷屏',
     mgr_open_title: '打开 AI 管理员',
-    settings_gear_title: '全部设置'
+    settings_gear_title: '全部设置',
+    fab_tip_label: 'AI 管理员',
+    fab_tip_desc: '直播摘要 · 聊天氛围'
   },
   es: {
     ob_badge: 'Primera vez aquí',
@@ -348,7 +356,9 @@ const I18N = {
     mgr_cat_sexual: 'Sexual',
     mgr_cat_spam: 'Spam',
     mgr_open_title: 'Abrir gestor IA',
-    settings_gear_title: 'Toda la configuración'
+    settings_gear_title: 'Toda la configuración',
+    fab_tip_label: 'Gestor IA',
+    fab_tip_desc: 'Resumen del stream y ambiente del chat'
   },
   ru: {
     ob_badge: 'Первый раз здесь',
@@ -415,6 +425,8 @@ const I18N = {
     mgr_cat_sexual: 'Сексуальное',
     mgr_cat_spam: 'Спам',
     mgr_open_title: 'Открыть ИИ-менеджер',
-    settings_gear_title: 'Все настройки'
+    settings_gear_title: 'Все настройки',
+    fab_tip_label: 'ИИ-менеджер',
+    fab_tip_desc: 'Сводка трансляции и настроение чата'
   }
 };

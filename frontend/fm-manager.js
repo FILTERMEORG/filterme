@@ -100,6 +100,13 @@ function closeManagerPanel() {
   if (els.fmMgrPanel) els.fmMgrPanel.classList.remove('open');
 }
 
+// FAB 클릭용 — 이미 열려 있으면 닫고, 닫혀 있으면 연다.
+function toggleManagerPanel() {
+  if (!els.fmMgrPanel) return;
+  if (els.fmMgrPanel.classList.contains('open')) closeManagerPanel();
+  else openManagerPanel();
+}
+
 function wireManagerEvents() {
   if (!els.fmMgrPanel) return;
   els.fmMgrPanel.querySelectorAll('.fm-mgr-tab').forEach((tabEl) => {

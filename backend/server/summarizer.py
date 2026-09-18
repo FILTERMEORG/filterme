@@ -4,13 +4,19 @@
 import json
 import os
 
-LLM_PROVIDER = os.getenv("FM_LLM_PROVIDER", "")   # "anthropic" | "openai" | ""
+import httpx
+from dotenv import load_dotenv
+
+load_dotenv()  # analyzer.py와 동일한 관례
+
+LLM_PROVIDER = os.getenv("FM_LLM_PROVIDER", "")   # "anthropic" | "openai" | "google" | ""
 LLM_API_KEY = os.getenv("FM_LLM_API_KEY", "")
+LLM_MODEL = os.getenv("FM_LLM_MODEL", "")
 
 _SCHEMA_NOTE = (
     "다음 JSON 형식으로만 응답하세요. 다른 텍스트나 코드블록 없이 JSON 객체 하나만 출력합니다:\n"
-    '{"bullets": ["요약 문장 1", "요약 문장 2"], '
-    '"timeline": [{"time": "HH:MM", "text": "그 시점에 있었던 일"}, ...]}\n'
+    '{{"bullets": ["요약 문장 1", "요약 문장 2"], '
+    '"timeline": [{{"time": "HH:MM", "text": "그 시점에 있었던 일"}}, ...]}}\n'
     "timeline은 최근 순으로 최대 6개까지만 담아주세요."
 )
 
@@ -36,7 +42,31 @@ async def _call_llm(prompt: str) -> str | None:
     elif LLM_PROVIDER == "openai":
         # TODO: openai SDK chat.completions 호출
         pass
+    elif LLM_PROVIDER == "google":
+        return await _call_gemini(prompt)
     return None
+
+
+async def _call_gemini(prompt: str) -> str | None:
+    if not LLM_MODEL:
+        print("[summarizer] FM_LLM_MODEL이 설정되지 않았습니다.")
+        return None
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{LLM_MODEL}:generateContent?key={LLM_API_KEY}"
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"responseMimeType": "application/json"},  # JSON 모드 — _parse_llm_json 성공률↑
+    }
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            r = await client.post(url, json=payload)
+        if r.status_code != 200:
+            print(f"[summarizer] gemini {r.status_code}: {r.text[:300]}")
+            return None
+        data = r.json()
+        return data["candidates"][0]["content"]["parts"][0]["text"]
+    except Exception as e:
+        print(f"[summarizer] gemini 호출 오류: {e}")
+        return None
 
 
 def _parse_llm_json(raw: str) -> dict | None:
