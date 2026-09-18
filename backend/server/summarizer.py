@@ -13,11 +13,16 @@ LLM_PROVIDER = os.getenv("FM_LLM_PROVIDER", "")   # "anthropic" | "openai" | "go
 LLM_API_KEY = os.getenv("FM_LLM_API_KEY", "")
 LLM_MODEL = os.getenv("FM_LLM_MODEL", "")
 
+_MAX_BULLETS = 3
+_MAX_TIMELINE = 6
+
 _SCHEMA_NOTE = (
     "다음 JSON 형식으로만 응답하세요. 다른 텍스트나 코드블록 없이 JSON 객체 하나만 출력합니다:\n"
     '{{"bullets": ["요약 문장 1", "요약 문장 2"], '
     '"timeline": [{{"time": "HH:MM", "text": "그 시점에 있었던 일"}}, ...]}}\n'
-    "timeline은 최근 순으로 최대 6개까지만 담아주세요."
+    f"bullets는 가장 핵심적인 내용만 최대 {_MAX_BULLETS}개까지, "
+    f"timeline은 최근 순으로 최대 {_MAX_TIMELINE}개까지만 담아주세요. "
+    "방송이 길어져도 이 개수를 넘기지 마세요."
 )
 
 CAPTION_PROMPT = (
@@ -77,6 +82,10 @@ def _parse_llm_json(raw: str) -> dict | None:
     try:
         data = json.loads(cleaned)
         if isinstance(data.get("bullets"), list) and isinstance(data.get("timeline"), list):
+            # 프롬프트로 개수를 요청해도 LLM이 안 지킬 수 있어 서버에서 한 번 더 강제로 자른다
+            # (방송이 길어질수록 요약이 계속 늘어나 가독성이 떨어지는 것을 방지).
+            data["bullets"] = data["bullets"][:_MAX_BULLETS]
+            data["timeline"] = data["timeline"][:_MAX_TIMELINE]
             return data
     except Exception:
         pass

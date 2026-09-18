@@ -57,9 +57,17 @@ function renderManagerBody() {
   }
 }
 
+// "분석 중" 느낌을 주는 애니메이션 점 3개 + 문구 — 정적인 빈 상태 대신 사용
+function _analyzingHtml(label) {
+  return `<div class="fm-mgr-empty fm-mgr-analyzing">
+    <div class="fm-mgr-analyzing-dots"><span></span><span></span><span></span></div>
+    <div>${label}</div>
+  </div>`;
+}
+
 function renderRecentTab(payload) {
   if (!payload || payload.available === false) {
-    return `<div class="fm-mgr-empty">${t('mgr_empty_recent')}</div>`;
+    return _analyzingHtml(t('mgr_empty_recent'));
   }
   const intro = payload.source === 'captions' ? t('mgr_intro_confident') : t('mgr_intro_guess');
   const bullets = (payload.bullets || []).map((b) => `<div class="fm-mgr-bullet">· ${intro} ${b}</div>`).join('');
@@ -74,7 +82,7 @@ function renderRecentTab(payload) {
 }
 
 function renderMoodTab(pct) {
-  if (!pct) return `<div class="fm-mgr-empty">${t('mgr_empty_mood')}</div>`;
+  if (!pct) return _analyzingHtml(t('mgr_empty_mood'));
   const cats = [
     ['normal', t('mgr_cat_normal'), '#1D9E75'], ['profanity', t('mgr_cat_profanity'), '#D85A30'],
     ['spam', t('mgr_cat_spam'), '#BA7517'], ['sexual', t('mgr_cat_sexual'), '#D4537E'], ['political', t('mgr_cat_political'), '#7F77DD']
