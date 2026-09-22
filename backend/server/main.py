@@ -22,9 +22,6 @@ import collections
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from analyzer import analyze_batch
-from audio_stream import get_audio_url, capture_from_url
-from captions import transcribe_audio
-from live_captions import get_caption_track, poll_new_captions
 from summarizer import summarize_recent
 from youtube import get_live_chat_id
 from youtube_stream import stream_chat
@@ -40,12 +37,8 @@ INPUT_MAX = 200
 
 FLUSH_INTERVAL = 1.2   # 초. 이 주기로 모아서 배치 분석
 BUF_CAP = 500          # 버퍼 상한 (분석이 느릴 때 무한 증가 방지)
-STT_CHUNK_SEC = 60          # 한 번에 캡처하는 오디오 길이(초)
-STT_CHUNKS_PER_SUMMARY = 3  # 이 개수(약 3분)만큼 모이면 요약을 갱신
-STT_RETRY_BASE_SEC = 30     # 오디오 URL 조회 실패 시 첫 재시도까지 대기(초) — 지수적으로 증가
-STT_RETRY_MAX_SEC = 300     # 재시도 간격 상한(초) — 계속 실패해도 5분마다로 수렴
-CAPTION_POLL_SEC = 20        # 자막 매니페스트가 최근 30초 안팎의 윈도우만 보여주므로 그보다 짧게 폴링
-MIN_CHAT_FOR_KICKOFF = 5     # 자막이 없을 때, 접속 즉시 요약을 시도하기 위한 최소 채팅 수
+CHAT_SUMMARY_INTERVAL_SEC = 180  # 방송요약을 이 주기(3분)마다 그 시점 채팅으로 갱신
+MIN_CHAT_FOR_KICKOFF = 5     # 접속 즉시 첫 요약을 시도하기 위한 최소 채팅 수
 STATS_BROADCAST_SEC = 7      # 채팅 분위기/언어 비율 push 주기 — 집계는 채팅마다 하되 화면 갱신만 이만큼 뜸하게
 
 rooms = {}
@@ -103,13 +96,11 @@ class Room:
         self._lock = asyncio.Lock()
         self._recent = collections.deque(maxlen=60)   # [(author, dup_key)] 최근 도배 판정용
 
-        self._context_texts = collections.deque(maxlen=300)  # 채팅 모더레이션용 + 접속 즉시 요약 재료 (핫토픽에서도 재사용 예정)
-        self._caption_texts = collections.deque(maxlen=50)    # 자막 폴링 누적 (이 방송에 자막이 있을 때만 채워짐)
+        self._context_texts = collections.deque(maxlen=300)  # 채팅 모더레이션용 + 방송요약/핫토픽 재료
 
-        self._recent_stt = []          # 아직 요약에 반영 안 된 STT 조각들 (최대 STT_CHUNKS_PER_SUMMARY개)
         self._current_summary = None   # summarize_recent()가 반환한 {"topic","bullets"} — 압축 롤링 요약
         self._summary_updated_at = 0.0
-        self._summary_lock = asyncio.Lock()  # 접속-즉시 트리거와 STT 주기가 동시에 갱신하지 못하게
+        self._summary_lock = asyncio.Lock()  # 접속-즉시 트리거와 주기 갱신이 동시에 겹치지 않게
 
         self._mood_counts = {"normal": 0, "profanity": 0, "political": 0, "sexual": 0, "spam": 0}
         self._mood_total = 0
@@ -117,34 +108,25 @@ class Room:
         self._lang_total = 0
 
     async def run(self):
-        # STT 캡처(_stt_loop)·자막 폴링(_caption_loop)은 유튜브 채팅 API(get_live_chat_id)와
-        # 완전히 독립적이라 채팅 조회 성공 여부와 무관하게 항상 시작한다.
-        stt = asyncio.create_task(self._stt_loop())
-        caption = asyncio.create_task(self._caption_loop())
+        # 방송요약/채팅분위기/핫토픽 전부 채팅(gRPC streamList)에서 나오는 재료라,
+        # 채팅 조회 자체가 실패하면 이 방은 할 수 있는 게 없다(backfill·키워드 필터만 남음).
         try:
             chat_id = await asyncio.to_thread(get_live_chat_id, self.video_id)
         except Exception as e:
-            # 라이브가 아니거나 조회 실패 → 채팅 스트림은 못 열지만 클라이언트는 유지
-            # (backfill·키워드 필터·방송요약은 계속 동작). 방은 마지막 클라 나갈 때 정리됨.
             print(f"[room {self.video_id}] chat_id 실패(스트림 없음): {e}")
-            try:
-                await asyncio.gather(stt, caption)
-            finally:
-                stt.cancel()
-                caption.cancel()
             return
 
         recv = asyncio.create_task(self._recv(chat_id))
         flush = asyncio.create_task(self._flush_loop())
         stats = asyncio.create_task(self._stats_loop())
+        chat_summary = asyncio.create_task(self._chat_summary_loop())
         try:
-            await asyncio.gather(recv, flush, stt, caption, stats)
+            await asyncio.gather(recv, flush, stats, chat_summary)
         finally:
             recv.cancel()
             flush.cancel()
-            stt.cancel()
-            caption.cancel()
             stats.cancel()
+            chat_summary.cancel()
 
     async def _recv(self, chat_id):
         async for author, text in stream_chat(chat_id):
@@ -160,75 +142,27 @@ class Room:
             await asyncio.sleep(FLUSH_INTERVAL)
             await self._flush()
 
-    async def _caption_loop(self):
-        """유튜브 자동 자막을 주기적으로 폴링해 _caption_texts에 누적한다.
-        이 방송에 자막이 아예 없으면 곧바로 끝남 — 방송요약은 채팅(접속 즉시)과
-        STT(이후 3분마다)만으로 계속 동작한다."""
-        track = await get_caption_track(self.video_id)
-        if not track:
-            return
-        _, manifest_url = track
-        last_sq = 0
+    async def _chat_summary_loop(self):
+        """CHAT_SUMMARY_INTERVAL_SEC(3분)마다 그 시점까지의 채팅으로 방송요약을 갱신한다.
+        자막/STT 없이 채팅만 쓴다 — 유튜브 쪽(yt-dlp) 의존이 전혀 없어서 유지보수 부담이
+        없다는 게 이 방식을 쓰는 이유. summarize_recent()의 프롬프트가 출처를 안 가려서
+        "채팅에서" 같은 티 안 내고 확신 있는 톤으로 나온다."""
         while True:
-            text, last_sq = await poll_new_captions(manifest_url, last_sq)
-            if text:
-                self._caption_texts.append(text)
-            await asyncio.sleep(CAPTION_POLL_SEC)
-
-    async def _stt_loop(self):
-        """방송 오디오를 STT_CHUNK_SEC(60초)씩 캡처해 전사한다. STT_CHUNKS_PER_SUMMARY개
-        (약 3분)가 모이면 그동안 쌓인 자막(있다면)까지 합쳐서 이전 요약과 함께 새 압축
-        요약을 만들고 원본 텍스트는 버린다 — 그래서 계속 작게 유지된다. 채팅은 이 주기적
-        갱신엔 안 쓴다(접속 즉시 첫 요약용으로만 사용, 이후엔 핫토픽 전담).
-
-        오디오 URL은 캐싱해서 재사용한다 — 캡처마다 yt-dlp로 새로 조회하면 유튜브
-        속도 제한에 걸리기 쉽다(URL 자체는 보통 몇 시간 유효함). 실패할 때만 새로 받는다.
-
-        실패가 계속되면(예: 이 서버 IP가 막힌 상태) 재시도 간격을 지수적으로 늘린다 —
-        5초마다 계속 두드리면 스레드 풀 자리를 오래 붙잡아서 서버 전체(health check
-        포함)가 먹통이 될 수 있다. 성공하면 다시 짧은 간격으로 돌아간다."""
-        audio_url = None
-        retry_delay = STT_RETRY_BASE_SEC
-        while True:
-            if audio_url is None:
-                audio_url = await get_audio_url(self.video_id)
-                if audio_url is None:
-                    await asyncio.sleep(retry_delay)
-                    retry_delay = min(retry_delay * 2, STT_RETRY_MAX_SEC)
-                    continue
-            retry_delay = STT_RETRY_BASE_SEC
-            audio = await capture_from_url(audio_url, STT_CHUNK_SEC)
-            if not audio:
-                audio_url = None  # 만료/실패 — 다음 루프에서 새로 조회
-                await asyncio.sleep(retry_delay)
-                retry_delay = min(retry_delay * 2, STT_RETRY_MAX_SEC)
-                continue
-            text = await transcribe_audio(audio)
-            if not text:
-                continue
-            self._recent_stt.append(text)
-
-            if len(self._recent_stt) >= STT_CHUNKS_PER_SUMMARY:
-                stt_text = "\n".join(self._recent_stt)
-                self._recent_stt = []
-                caption_text = "\n".join(self._caption_texts) if self._caption_texts else ""
-                self._caption_texts.clear()
-                combined = f"{caption_text}\n{stt_text}" if caption_text else stt_text
-                await self._update_summary(combined)
+            await asyncio.sleep(CHAT_SUMMARY_INTERVAL_SEC)
+            chat_text = "\n".join(self._context_texts) if self._context_texts else ""
+            if chat_text:
+                await self._update_summary(chat_text)
 
     async def _maybe_kickoff_summary(self):
-        """접속 시점에 자막/채팅으로 즉시 첫 요약을 만든다 — STT 3분 주기를 기다릴 필요 없음.
+        """접속 시점에 채팅으로 즉시 첫 요약을 만든다 — 3분 주기를 기다릴 필요 없음.
         이미 요약이 있으면 아무것도 안 함(중복 호출 방지는 _current_summary 체크로 충분,
         드물게 겹쳐도 _update_summary의 락이 LLM 중복 호출까지만 막아주면 됨)."""
         if self._current_summary is not None:
             return
-        caption_text = "\n".join(self._caption_texts) if self._caption_texts else ""
-        if not caption_text and len(self._context_texts) < MIN_CHAT_FOR_KICKOFF:
+        if len(self._context_texts) < MIN_CHAT_FOR_KICKOFF:
             return  # 아직 재료 부족 — 다음 접속 때 다시 시도됨
-        chat_text = "\n".join(self._context_texts) if self._context_texts else ""
-        combined = f"{caption_text}\n{chat_text}" if caption_text else chat_text
-        self._caption_texts.clear()
-        await self._update_summary(combined)
+        chat_text = "\n".join(self._context_texts)
+        await self._update_summary(chat_text)
 
     async def _update_summary(self, new_text):
         async with self._summary_lock:
@@ -349,9 +283,9 @@ async def ws(sock: WebSocket):
          "result": {"normal","profanity","political","sexual","spam"}}  # 각 0~100
     서버 → 클라이언트 (신규)
         {"type": "summary", "available": bool, "topic"?: str, "bullets"?: [str, ...]}
-        # 첫 요약은 자막/채팅으로 접속 직후 빠르게 뜨고(둘 다 없으면 available:false 유지),
-        # 이후 STT_CHUNKS_PER_SUMMARY개(약 3분)가 모일 때마다 자막+STT로 서버가 알아서
-        # 다시 push한다 — 클라이언트가 새로고침을 요청하는 프로토콜은 없다.
+        # 첫 요약은 채팅이 MIN_CHAT_FOR_KICKOFF개 모이면 접속 직후 빠르게 뜨고,
+        # 이후 CHAT_SUMMARY_INTERVAL_SEC(3분)마다 서버가 알아서 다시 push한다 —
+        # 클라이언트가 새로고침을 요청하는 프로토콜은 없다.
         {"type": "mood", "percentages"?: {...}, "languages"?: {...}}
         # 집계는 채팅마다 하지만 push는 STATS_BROADCAST_SEC(약 7초)마다 한 번, 접속 시 1회 추가 전송
     """

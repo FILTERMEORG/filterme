@@ -7,11 +7,3 @@ python-dotenv==1.2.1
 grpcio==1.80.0
 protobuf==6.33.6
 google-api-python-client==2.198.0
-
-# 영상(방송) 내용 기반 요약용 — 라이브 오디오 캡처 + 로컬 음성인식(무료, API 한도 없음)
-# yt-dlp는 버전을 고정해둔다 — 안 고정하면 Docker 레이어 캐시가 requirements.txt 내용이
-# 그대로일 때 pip install을 다시 안 돌려서, "최신 설치"가 실은 오래전에 캐싱된 낡은 버전을
-# 계속 재사용하게 된다(유튜브가 자주 바뀌는 만큼 yt-dlp도 자주 릴리즈되므로 특히 문제가 됨).
-# 새 버전이 필요해지면 이 줄의 숫자를 올려서 캐시를 강제로 깨야 한다.
-yt-dlp==2025.10.14
-faster-whisper
