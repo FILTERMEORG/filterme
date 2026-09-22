@@ -39,6 +39,7 @@ FLUSH_INTERVAL = 1.2   # 초. 이 주기로 모아서 배치 분석
 BUF_CAP = 500          # 버퍼 상한 (분석이 느릴 때 무한 증가 방지)
 CHAT_SUMMARY_INTERVAL_SEC = 180  # 방송요약+핫토픽 분석을 이 주기(3분)마다 확인
 MIN_CHAT_FOR_ANALYSIS = 5   # 첫 분석 시도 최소 채팅 수 + 재확인 시 "새로 쌓인 채팅" 최소 개수로도 재사용
+KICKOFF_RETRY_SEC = 20      # 첫 분석 재료가 아직 부족하면 이 간격으로 재시도(성공하면 루프 종료)
 STATS_BROADCAST_SEC = 7      # 채팅 분위기/언어 비율 push 주기 — 집계는 채팅마다 하되 화면 갱신만 이만큼 뜸하게
 
 rooms = {}
@@ -124,13 +125,15 @@ class Room:
         flush = asyncio.create_task(self._flush_loop())
         stats = asyncio.create_task(self._stats_loop())
         analyze = asyncio.create_task(self._analyze_loop())
+        kickoff = asyncio.create_task(self._kickoff_analysis_loop())
         try:
-            await asyncio.gather(recv, flush, stats, analyze)
+            await asyncio.gather(recv, flush, stats, analyze, kickoff)
         finally:
             recv.cancel()
             flush.cancel()
             stats.cancel()
             analyze.cancel()
+            kickoff.cancel()
 
     async def _recv(self, chat_id):
         async for author, text in stream_chat(chat_id):
@@ -163,15 +166,18 @@ class Room:
                 continue
             await self._update_analysis("\n".join(self._context_texts))
 
-    async def _maybe_kickoff_analysis(self):
-        """접속 시점에 채팅으로 즉시 첫 분석(방송요약+핫토픽)을 만든다 — 3분 주기를
-        기다릴 필요 없음. 이미 요약이 있으면 아무것도 안 함(중복 호출 방지는
-        _current_summary 체크로 충분, 드물게 겹쳐도 _update_analysis의 락이 LLM 중복
-        호출까지만 막아주면 됨)."""
-        if self._current_summary is not None:
-            return
-        if len(self._context_texts) < MIN_CHAT_FOR_ANALYSIS:
-            return  # 아직 재료 부족 — 다음 접속 때 다시 시도되거나 3분 주기 루프가 처리함
+    async def _kickoff_analysis_loop(self):
+        """3분 주기(_analyze_loop)를 기다리지 않고 첫 분석(방송요약+핫토픽)을 최대한
+        빨리 보여주기 위한 보조 루프. 채팅이 MIN_CHAT_FOR_ANALYSIS개 모일 때까지
+        KICKOFF_RETRY_SEC(20초) 간격으로 계속 재시도하다가, 한 번 성공하면 스스로
+        끝난다 — 그 뒤로는 _analyze_loop이 이어받음. _context_texts가 시간 만료 없는
+        개수 기반(maxlen=300) 버퍼라 계속 재시도해도 "느린 채팅이 영원히 굶는" 문제가
+        없다."""
+        while self._current_summary is None:
+            if len(self._context_texts) >= MIN_CHAT_FOR_ANALYSIS:
+                await self._update_analysis("\n".join(self._context_texts))
+            if self._current_summary is None:
+                await asyncio.sleep(KICKOFF_RETRY_SEC)
         await self._update_analysis("\n".join(self._context_texts))
 
     def _hot_topics_message(self):
@@ -341,8 +347,6 @@ async def ws(sock: WebSocket):
         rooms[video_id] = room
         room.task = asyncio.create_task(room.run())
     room.clients.add(sock)
-    if room._current_summary is None:
-        asyncio.create_task(room._maybe_kickoff_analysis())
     try:
         await sock.send_json(room._snapshot_message())
         stats_msg = room._stats_message()

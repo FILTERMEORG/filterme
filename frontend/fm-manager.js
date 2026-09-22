@@ -81,10 +81,8 @@ function renderRecentTab(payload) {
 }
 
 function renderHotTopicTab(payload) {
-  if (!payload || payload.available === false || !(payload.topics || []).length) {
-    return _analyzingHtml(t('mgr_empty_hottopic'));
-  }
-  const rows = payload.topics.map((tp, i) => `
+  const topics = (payload && payload.available !== false) ? (payload.topics || []) : [];
+  const rows = topics.map((tp, i) => `
     <div class="fm-mgr-topic-row">
       <span class="fm-mgr-topic-rank">${i + 1}</span>
       <span class="fm-mgr-topic-name">${tp.topic}</span>
