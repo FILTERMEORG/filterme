@@ -8,5 +8,6 @@ grpcio==1.80.0
 protobuf==6.33.6
 google-api-python-client==2.198.0
 
-# 영상(방송) 내용 기반 요약용 — 유튜브 자동 자막(비공식 매니페스트) 조회
+# 영상(방송) 내용 기반 요약용 — 라이브 오디오 캡처 + 로컬 음성인식(무료, API 한도 없음)
 yt-dlp
+faster-whisper

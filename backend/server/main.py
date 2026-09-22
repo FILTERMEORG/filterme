@@ -22,8 +22,9 @@ import collections
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from analyzer import analyze_batch
-from live_captions import get_caption_track, poll_new_captions
-from summarizer import summarize_context
+from audio_stream import capture_audio_chunk
+from captions import transcribe_audio
+from summarizer import summarize_recent
 from youtube import get_live_chat_id
 from youtube_stream import stream_chat
 
@@ -38,8 +39,8 @@ INPUT_MAX = 200
 
 FLUSH_INTERVAL = 1.2   # 초. 이 주기로 모아서 배치 분석
 BUF_CAP = 500          # 버퍼 상한 (분석이 느릴 때 무한 증가 방지)
-SUMMARY_COOLDOWN_SEC = 60  # "최근" 탭 새로고침 쿨다운 — LLM 비용이 드는 쪽만 적용
-CAPTION_POLL_SEC = 20      # 자막 매니페스트가 최근 30초 안팎의 윈도우만 보여주므로 그보다 짧게 폴링
+STT_CHUNK_SEC = 60          # 한 번에 캡처하는 오디오 길이(초)
+STT_CHUNKS_PER_SUMMARY = 3  # 이 개수(약 3분)만큼 모이면 요약을 갱신
 
 rooms = {}
 
@@ -73,38 +74,39 @@ class Room:
         self._lock = asyncio.Lock()
         self._recent = collections.deque(maxlen=60)   # [(author, dup_key)] 최근 도배 판정용
 
-        self._context_texts = collections.deque(maxlen=300)  # 요약용 채팅 텍스트 (모더레이션 _buf와 별개)
-        self._caption_texts = collections.deque(maxlen=50)    # 요약용 영상 내용(음성 전사) 텍스트
-        self.last_summary = None       # summarize_context()가 반환한 dict
-        self.last_summary_ts = 0.0
-        self._summary_lock = asyncio.Lock()  # request_summary 동시 호출 시 LLM 중복 호출 방지 (_lock과는 별개)
+        self._context_texts = collections.deque(maxlen=300)  # 채팅 모더레이션용 (요약과는 별개, 핫토픽에서 재사용 예정)
+
+        self._recent_stt = []          # 아직 요약에 반영 안 된 STT 조각들 (최대 STT_CHUNKS_PER_SUMMARY개)
+        self._current_summary = None   # summarize_recent()가 반환한 {"topic","bullets"} — 압축 롤링 요약
+        self._summary_updated_at = 0.0
+
         self._mood_counts = {"normal": 0, "profanity": 0, "political": 0, "sexual": 0, "spam": 0}
         self._mood_total = 0
 
     async def run(self):
-        # 자막 폴링(_caption_loop)은 유튜브 채팅 API(get_live_chat_id)와 완전히 독립적이라
+        # STT 캡처(_stt_loop)는 유튜브 채팅 API(get_live_chat_id)와 완전히 독립적이라
         # 채팅 조회 성공 여부와 무관하게 항상 시작한다.
-        caption = asyncio.create_task(self._caption_loop())
+        stt = asyncio.create_task(self._stt_loop())
         try:
             chat_id = await asyncio.to_thread(get_live_chat_id, self.video_id)
         except Exception as e:
             # 라이브가 아니거나 조회 실패 → 채팅 스트림은 못 열지만 클라이언트는 유지
-            # (backfill·키워드 필터·자막 기반 요약은 계속 동작). 방은 마지막 클라 나갈 때 정리됨.
+            # (backfill·키워드 필터·방송요약은 계속 동작). 방은 마지막 클라 나갈 때 정리됨.
             print(f"[room {self.video_id}] chat_id 실패(스트림 없음): {e}")
             try:
-                await caption
+                await stt
             finally:
-                caption.cancel()
+                stt.cancel()
             return
 
         recv = asyncio.create_task(self._recv(chat_id))
         flush = asyncio.create_task(self._flush_loop())
         try:
-            await asyncio.gather(recv, flush, caption)
+            await asyncio.gather(recv, flush, stt)
         finally:
             recv.cancel()
             flush.cancel()
-            caption.cancel()
+            stt.cancel()
 
     async def _recv(self, chat_id):
         async for author, text in stream_chat(chat_id):
@@ -120,20 +122,28 @@ class Room:
             await asyncio.sleep(FLUSH_INTERVAL)
             await self._flush()
 
-    async def _caption_loop(self):
-        """유튜브 자동 자막을 주기적으로 폴링해 _caption_texts에 누적한다.
-        이 방송에 자막이 아예 없으면 곧바로 끝남 — request_summary()는 채팅 기반으로
-        자동 진행된다(_recv가 채우는 _context_texts는 이 루프와 무관하게 항상 채워짐)."""
-        track = await get_caption_track(self.video_id)
-        if not track:
-            return
-        _, manifest_url = track
-        last_sq = 0
+    async def _stt_loop(self):
+        """방송 오디오를 STT_CHUNK_SEC(60초)씩 캡처해 전사한다. STT_CHUNKS_PER_SUMMARY개
+        (약 3분)가 모이면 이전 요약과 합쳐 새 압축 요약을 만들고 원본 텍스트는 버린다 —
+        그래서 _recent_stt/_current_summary 둘 다 계속 작게 유지된다."""
         while True:
-            text, last_sq = await poll_new_captions(manifest_url, last_sq)
-            if text:
-                self._caption_texts.append(text)
-            await asyncio.sleep(CAPTION_POLL_SEC)
+            audio = await capture_audio_chunk(self.video_id, STT_CHUNK_SEC)
+            if not audio:
+                await asyncio.sleep(5)
+                continue
+            text = await transcribe_audio(audio)
+            if not text:
+                continue
+            self._recent_stt.append(text)
+
+            if len(self._recent_stt) >= STT_CHUNKS_PER_SUMMARY:
+                joined = "\n".join(self._recent_stt)
+                self._recent_stt = []
+                summary = await summarize_recent(self._current_summary, joined)
+                if summary is not None:
+                    self._current_summary = summary
+                    self._summary_updated_at = time.time()
+                    await self._broadcast_summary()
 
     async def _flush(self):
         async with self._lock:
@@ -184,35 +194,18 @@ class Room:
                     except Exception:
                         pass
 
-    async def request_summary(self, force=False):
-        async with self._summary_lock:  # 두 클라이언트가 거의 동시에 새로고침해도 LLM은 한 번만
-            now = time.time()
-            if not force and self.last_summary is not None and (now - self.last_summary_ts) < SUMMARY_COOLDOWN_SEC:
-                await self._broadcast_summary(cached=True)
-                return
+    def _snapshot_message(self):
+        if self._current_summary is None:
+            return {"type": "summary", "available": False}
+        return {
+            "type": "summary",
+            "available": True,
+            "topic": self._current_summary["topic"],
+            "bullets": self._current_summary["bullets"],
+        }
 
-            captions_text = "\n".join(self._caption_texts) if self._caption_texts else None
-            chat_texts = list(self._context_texts)
-            result = await summarize_context(captions_text, chat_texts)
-            if result is not None:
-                self.last_summary = result
-                self.last_summary_ts = now
-                await self._broadcast_summary(cached=False)
-            else:
-                # LLM 미연동/실패 시 기존 캐시(없으면 available:false)를 그대로 재전송
-                await self._broadcast_summary(cached=True)
-
-    async def _broadcast_summary(self, cached):
-        if self.last_summary is None:
-            msg = {"type": "summary", "available": False}
-        else:
-            msg = {
-                "type": "summary",
-                "available": True,
-                "source": self.last_summary["source"],
-                "bullets": self.last_summary["bullets"],
-                "cached": cached,
-            }
+    async def _broadcast_summary(self):
+        msg = self._snapshot_message()
         for client in list(self.clients):
             try:
                 await client.send_json(msg)
@@ -228,12 +221,13 @@ async def ws(sock: WebSocket):
         {"videoId": "<11자리 유튜브 videoId>"}
     클라이언트 → 서버 (이후, 선택, 여러 번 가능)
         {"type": "backfill", "texts": ["연결 전부터 화면에 있던 채팅", ...]}
-        {"type": "summary_request"}  # "최근" 탭 새로고침 버튼
     서버 → 클라이언트 (실시간 채팅 + backfill 응답 공통)
         {"type": "analysis", "author": str, "text": str,
          "result": {"normal","profanity","political","sexual","spam"}}  # 각 0~100
     서버 → 클라이언트 (신규)
-        {"type": "summary", "available": bool, "source"?, "bullets"?, "cached"?}
+        {"type": "summary", "available": bool, "topic"?: str, "bullets"?: [str, ...]}
+        # 접속 시 즉시 1회 전송되고, 이후 STT_CHUNKS_PER_SUMMARY개(약 3분)가 모일 때마다
+        # 서버가 알아서 다시 push한다 — 클라이언트가 새로고침을 요청하는 프로토콜은 없다.
         {"type": "mood", "percentages": {...}}  # 쿨다운 없이 flush 주기(1.2초)마다 자동 push
     """
     await sock.accept()
@@ -260,8 +254,10 @@ async def ws(sock: WebSocket):
         rooms[video_id] = room
         room.task = asyncio.create_task(room.run())
     room.clients.add(sock)
-    if room.last_summary is None and len(room._context_texts) >= 5:
-        asyncio.create_task(room.request_summary())
+    try:
+        await sock.send_json(room._snapshot_message())
+    except Exception:
+        pass
 
     try:
         while True:
@@ -278,8 +274,6 @@ async def ws(sock: WebSocket):
                         "text": text,
                         "result": result,
                     })
-            elif isinstance(data, dict) and data.get("type") == "summary_request":
-                await room.request_summary(force=False)
     except (WebSocketDisconnect, Exception):
         pass
     finally:

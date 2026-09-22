@@ -19,7 +19,6 @@ function buildManagerPanel() {
     <div class="fm-mgr-head">
       <span class="fm-mgr-avatar">F<span>M</span></span>
       <span class="fm-mgr-title"></span>
-      <i class="fm-mgr-refresh" id="fmMgrRefresh">⟳</i>
       <i class="fm-mgr-close" id="fmMgrClose">✕</i>
     </div>
     <div class="fm-mgr-tabs">
@@ -36,7 +35,6 @@ function buildManagerPanel() {
 function refreshManagerTexts() {
   if (!els.fmMgrPanel) return;
   els.fmMgrPanel.querySelector('.fm-mgr-title').textContent = t('mgr_title');
-  els.fmMgrRefresh.title = t('mgr_refresh_title');
   els.fmMgrClose.title = t('mgr_close_title');
   els.fmMgrPanel.querySelectorAll('.fm-mgr-tab').forEach((el) => {
     el.textContent = el.dataset.tab === 'recent' ? t('mgr_tab_recent') : t('mgr_tab_mood');
@@ -48,7 +46,6 @@ function renderManagerBody() {
   els.fmMgrPanel.querySelectorAll('.fm-mgr-tab').forEach((tabEl) => {
     tabEl.classList.toggle('active', tabEl.dataset.tab === _managerState.tab);
   });
-  els.fmMgrRefresh.style.display = _managerState.tab === 'recent' ? '' : 'none';
 
   if (_managerState.tab === 'mood') {
     els.fmMgrBody.innerHTML = renderMoodTab(_managerState.mood);
@@ -70,10 +67,12 @@ function renderRecentTab(payload) {
     return _analyzingHtml(t('mgr_empty_recent'));
   }
   const bullets = (payload.bullets || []).map((b) => `<div class="fm-mgr-bullet">· ${b}</div>`).join('');
-  const status = payload.cached ? t('mgr_status_cached') : t('mgr_status_now');
   return `
-    <div class="fm-mgr-status">${status}</div>
-    ${bullets}`;
+    <div class="fm-mgr-status">${t('mgr_topic_label')}</div>
+    <div class="fm-mgr-topic">${payload.topic || ''}</div>
+    <div class="fm-mgr-status fm-mgr-bullets-label">${t('mgr_bullets_label')}</div>
+    ${bullets}
+    <div class="fm-mgr-footer">${t('mgr_footer_note')}</div>`;
 }
 
 function renderMoodTab(pct) {
@@ -97,7 +96,6 @@ function openManagerPanel() {
   closeModal(); // 전체 설정 모달과 상호 배타 (fm-ui.js)
   els.fmMgrPanel.classList.add('open');
   renderManagerBody();
-  if (!_managerState.summary) sendToServer({ type: 'summary_request' }); // fm-socket.js
 }
 function closeManagerPanel() {
   if (els.fmMgrPanel) els.fmMgrPanel.classList.remove('open');
@@ -116,9 +114,6 @@ function wireManagerEvents() {
     tabEl.addEventListener('click', () => { _managerState.tab = tabEl.dataset.tab; renderManagerBody(); });
   });
   els.fmMgrClose.addEventListener('click', closeManagerPanel);
-  els.fmMgrRefresh.addEventListener('click', () => {
-    sendToServer({ type: 'summary_request' }); // fm-socket.js
-  });
 }
 
 // fm-socket.js의 onmessage가 호출
