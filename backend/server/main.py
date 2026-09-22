@@ -22,7 +22,7 @@ import collections
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from analyzer import analyze_batch
-from summarizer import summarize_recent
+from summarizer import summarize_recent, extract_hot_topics
 from youtube import get_live_chat_id
 from youtube_stream import stream_chat
 
@@ -40,6 +40,9 @@ BUF_CAP = 500          # 버퍼 상한 (분석이 느릴 때 무한 증가 방�
 CHAT_SUMMARY_INTERVAL_SEC = 180  # 방송요약을 이 주기(3분)마다 그 시점 채팅으로 갱신
 MIN_CHAT_FOR_KICKOFF = 5     # 접속 즉시 첫 요약을 시도하기 위한 최소 채팅 수
 STATS_BROADCAST_SEC = 7      # 채팅 분위기/언어 비율 push 주기 — 집계는 채팅마다 하되 화면 갱신만 이만큼 뜸하게
+HOT_TOPIC_WINDOW_SEC = 300   # 핫토픽 계산에 쓰는 채팅 윈도우(최근 5분)
+HOT_TOPIC_INTERVAL_SEC = 45  # 핫토픽 재계산 주기
+MIN_CHAT_FOR_HOT_TOPICS = 10  # 이보다 적으면 이번 주기는 건너뜀 (재료 부족)
 
 rooms = {}
 
@@ -96,11 +99,14 @@ class Room:
         self._lock = asyncio.Lock()
         self._recent = collections.deque(maxlen=60)   # [(author, dup_key)] 최근 도배 판정용
 
-        self._context_texts = collections.deque(maxlen=300)  # 채팅 모더레이션용 + 방송요약/핫토픽 재료
+        self._context_texts = collections.deque(maxlen=300)  # 채팅 모더레이션용 + 방송요약 재료
+        self._recent_chat_ts = collections.deque()  # [(timestamp, text), ...] 핫토픽용 — 최근 5분만 유지
 
         self._current_summary = None   # summarize_recent()가 반환한 {"topic","bullets"} — 압축 롤링 요약
         self._summary_updated_at = 0.0
         self._summary_lock = asyncio.Lock()  # 접속-즉시 트리거와 주기 갱신이 동시에 겹치지 않게
+
+        self._hot_topics = None  # extract_hot_topics()가 반환한 [{"topic","count"}, ...] — 최신 결과만 유지
 
         self._mood_counts = {"normal": 0, "profanity": 0, "political": 0, "sexual": 0, "spam": 0}
         self._mood_total = 0
@@ -120,22 +126,26 @@ class Room:
         flush = asyncio.create_task(self._flush_loop())
         stats = asyncio.create_task(self._stats_loop())
         chat_summary = asyncio.create_task(self._chat_summary_loop())
+        hot_topics = asyncio.create_task(self._hot_topic_loop())
         try:
-            await asyncio.gather(recv, flush, stats, chat_summary)
+            await asyncio.gather(recv, flush, stats, chat_summary, hot_topics)
         finally:
             recv.cancel()
             flush.cancel()
             stats.cancel()
             chat_summary.cancel()
+            hot_topics.cancel()
 
     async def _recv(self, chat_id):
         async for author, text in stream_chat(chat_id):
             if not text:
                 continue
-            self._buf.append((author, text[:INPUT_MAX]))
+            trimmed = text[:INPUT_MAX]
+            self._buf.append((author, trimmed))
             if len(self._buf) > BUF_CAP:
                 self._buf = self._buf[-BUF_CAP:]
-            self._context_texts.append(text[:INPUT_MAX])
+            self._context_texts.append(trimmed)
+            self._recent_chat_ts.append((time.time(), trimmed))
 
     async def _flush_loop(self):
         while True:
@@ -152,6 +162,35 @@ class Room:
             chat_text = "\n".join(self._context_texts) if self._context_texts else ""
             if chat_text:
                 await self._update_summary(chat_text)
+
+    async def _hot_topic_loop(self):
+        """HOT_TOPIC_INTERVAL_SEC(45초)마다 최근 HOT_TOPIC_WINDOW_SEC(5분) 채팅으로
+        핫토픽을 다시 뽑는다. 히스토리는 안 남기고 최신 결과만 _hot_topics에 유지."""
+        while True:
+            await asyncio.sleep(HOT_TOPIC_INTERVAL_SEC)
+            cutoff = time.time() - HOT_TOPIC_WINDOW_SEC
+            while self._recent_chat_ts and self._recent_chat_ts[0][0] < cutoff:
+                self._recent_chat_ts.popleft()
+            texts = [t for _, t in self._recent_chat_ts]
+            if len(texts) < MIN_CHAT_FOR_HOT_TOPICS:
+                continue
+            topics = await extract_hot_topics(texts)
+            if topics is not None:
+                self._hot_topics = topics
+                await self._broadcast_hot_topics()
+
+    def _hot_topics_message(self):
+        if not self._hot_topics:
+            return {"type": "hot_topics", "available": False}
+        return {"type": "hot_topics", "available": True, "topics": self._hot_topics}
+
+    async def _broadcast_hot_topics(self):
+        msg = self._hot_topics_message()
+        for client in list(self.clients):
+            try:
+                await client.send_json(msg)
+            except Exception:
+                pass
 
     async def _maybe_kickoff_summary(self):
         """접속 시점에 채팅으로 즉시 첫 요약을 만든다 — 3분 주기를 기다릴 필요 없음.
@@ -288,6 +327,8 @@ async def ws(sock: WebSocket):
         # 클라이언트가 새로고침을 요청하는 프로토콜은 없다.
         {"type": "mood", "percentages"?: {...}, "languages"?: {...}}
         # 집계는 채팅마다 하지만 push는 STATS_BROADCAST_SEC(약 7초)마다 한 번, 접속 시 1회 추가 전송
+        {"type": "hot_topics", "available": bool, "topics"?: [{"topic": str, "count": int}, ...]}
+        # HOT_TOPIC_INTERVAL_SEC(45초)마다 최근 5분 채팅 기준으로 갱신, 접속 시 1회 추가 전송
     """
     await sock.accept()
     try:
@@ -320,6 +361,7 @@ async def ws(sock: WebSocket):
         stats_msg = room._stats_message()
         if stats_msg is not None:
             await sock.send_json(stats_msg)
+        await sock.send_json(room._hot_topics_message())
     except Exception:
         pass
 

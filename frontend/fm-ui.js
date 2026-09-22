@@ -571,6 +571,11 @@ const STYLE = `
   .fm-mgr-legend{display:flex;flex-wrap:wrap;gap:6px 10px;margin-top:8px;}
   .fm-mgr-legend-item{display:flex;align-items:center;gap:4px;font-size:10.5px;color:var(--fm-text-secondary);white-space:nowrap;}
   .fm-mgr-legend-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;}
+  .fm-mgr-topic-row{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--fm-border);}
+  .fm-mgr-topic-row:last-child{border-bottom:none;}
+  .fm-mgr-topic-rank{font-size:11px;font-weight:800;color:#7F77DD;width:14px;flex-shrink:0;}
+  .fm-mgr-topic-name{font-size:12.5px;color:#fff;flex:1;}
+  .fm-mgr-topic-count{font-size:10.5px;color:var(--fm-text-secondary);white-space:nowrap;}
 
   /* ---- 전체 설정 모달: 플로팅 버튼 클릭 시 그 자리에서 바로 열림 ---- */
   .fm-backdrop{

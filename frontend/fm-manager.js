@@ -5,8 +5,9 @@
 // 통해서만 접근한다 — document.querySelector는 Shadow DOM 안을 못 뚫으므로 절대 쓰지 않는다.
 
 let _managerState = {
-  tab: 'recent',        // 'recent' | 'mood'
+  tab: 'recent',        // 'recent' | 'hottopic' | 'mood'
   summary: null,        // 서버가 보낸 마지막 summary payload
+  hotTopics: null,      // 서버가 보낸 마지막 hot_topics payload
   mood: null,           // 서버가 보낸 마지막 mood percentages
   languages: null       // 서버가 보낸 마지막 시청자 언어 percentages
 };
@@ -24,6 +25,7 @@ function buildManagerPanel() {
     </div>
     <div class="fm-mgr-tabs">
       <span class="fm-mgr-tab active" data-tab="recent"></span>
+      <span class="fm-mgr-tab" data-tab="hottopic"></span>
       <span class="fm-mgr-tab" data-tab="mood"></span>
     </div>
     <div class="fm-mgr-body" id="fmMgrBody"></div>
@@ -37,8 +39,9 @@ function refreshManagerTexts() {
   if (!els.fmMgrPanel) return;
   els.fmMgrPanel.querySelector('.fm-mgr-title').textContent = t('mgr_title');
   els.fmMgrClose.title = t('mgr_close_title');
+  const tabLabels = { recent: t('mgr_tab_recent'), hottopic: t('mgr_tab_hottopic'), mood: t('mgr_tab_mood') };
   els.fmMgrPanel.querySelectorAll('.fm-mgr-tab').forEach((el) => {
-    el.textContent = el.dataset.tab === 'recent' ? t('mgr_tab_recent') : t('mgr_tab_mood');
+    el.textContent = tabLabels[el.dataset.tab];
   });
 }
 
@@ -50,6 +53,8 @@ function renderManagerBody() {
 
   if (_managerState.tab === 'mood') {
     els.fmMgrBody.innerHTML = renderMoodTab(_managerState.mood, _managerState.languages);
+  } else if (_managerState.tab === 'hottopic') {
+    els.fmMgrBody.innerHTML = renderHotTopicTab(_managerState.hotTopics);
   } else {
     els.fmMgrBody.innerHTML = renderRecentTab(_managerState.summary);
   }
@@ -74,6 +79,19 @@ function renderRecentTab(payload) {
     <div class="fm-mgr-status fm-mgr-bullets-label">${t('mgr_bullets_label')}</div>
     ${bullets}
     <div class="fm-mgr-footer">${t('mgr_footer_note')}</div>`;
+}
+
+function renderHotTopicTab(payload) {
+  if (!payload || payload.available === false || !(payload.topics || []).length) {
+    return _analyzingHtml(t('mgr_empty_hottopic'));
+  }
+  const rows = payload.topics.map((tp, i) => `
+    <div class="fm-mgr-topic-row">
+      <span class="fm-mgr-topic-rank">${i + 1}</span>
+      <span class="fm-mgr-topic-name">${tp.topic}</span>
+      <span class="fm-mgr-topic-count">${t('mgr_hottopic_count', { n: tp.count })}</span>
+    </div>`).join('');
+  return `<div class="fm-mgr-mood-note">${t('mgr_hottopic_note')}</div>${rows}`;
 }
 
 function _renderBars(pct, entries) {
@@ -140,6 +158,7 @@ function wireManagerEvents() {
 // fm-socket.js의 onmessage가 호출
 function onManagerServerMessage(m) {
   if (m.type === 'summary') { _managerState.summary = m; renderManagerBody(); }
+  else if (m.type === 'hot_topics') { _managerState.hotTopics = m; renderManagerBody(); }
   else if (m.type === 'mood') {
     if (m.percentages) _managerState.mood = m.percentages;
     if (m.languages) _managerState.languages = m.languages;

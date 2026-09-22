@@ -101,7 +101,7 @@ def _parse_summary_json(raw: str) -> dict | None:
 
 
 async def summarize_recent(previous: dict | None, new_text: str) -> dict | None:
-    """자막/채팅/STT 텍스트로 "지금 무슨 이야기 중" 요약을 만들거나 갱신한다.
+    """채팅 텍스트로 "지금 무슨 이야기 중" 요약을 만들거나 갱신한다.
     previous: 이전 summarize_recent() 결과({"topic","bullets"}) 또는 첫 요약이면 None.
     반환: {"topic": str, "bullets": [...]} 또는 내용/LLM이 부족하면 None."""
     if not new_text or not new_text.strip():
@@ -119,3 +119,44 @@ async def summarize_recent(previous: dict | None, new_text: str) -> dict | None:
 
     raw = await _call_llm(prompt)
     return _parse_summary_json(raw) if raw else None
+
+
+_MAX_HOT_TOPICS = 5
+
+_HOT_TOPIC_SCHEMA_NOTE = (
+    "다음 JSON 형식으로만 응답하세요. 다른 텍스트나 코드블록 없이 JSON 객체 하나만 출력합니다:\n"
+    '{{"topics": [{{"topic": "주제 이름", "count": 정수}}, ...]}}\n'
+    f"topics는 언급 빈도가 높은 순으로 최대 {_MAX_HOT_TOPICS}개까지만 담아주세요."
+)
+HOT_TOPIC_PROMPT = (
+    "다음은 라이브 방송 채팅 로그입니다. 표현이 달라도 같은 걸 묻거나 말하는 채팅은 "
+    "하나의 주제로 묶어주세요 (예: '신캐 언제 나와요?', '출시일 언제?', '신캐 날짜 공개됨?' "
+    "→ '신캐 출시일' 하나로). 지금 채팅에서 가장 많이 언급되는 주제를 뽑고, count는 "
+    "그 주제에 해당하는 채팅이 대략 몇 개인지 담아주세요. " + _HOT_TOPIC_SCHEMA_NOTE +
+    "\n\n채팅:\n{content}"
+)
+
+
+def _parse_hot_topics_json(raw: str) -> list[dict] | None:
+    cleaned = raw.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.strip("`")
+        cleaned = cleaned.split("\n", 1)[-1] if "\n" in cleaned else cleaned
+    try:
+        data = json.loads(cleaned)
+        topics = data.get("topics")
+        if isinstance(topics, list):
+            return topics[:_MAX_HOT_TOPICS]
+    except Exception:
+        pass
+    return None
+
+
+async def extract_hot_topics(chat_texts: list[str]) -> list[dict] | None:
+    """최근 채팅에서 자주 언급되는 주제를 뽑는다(비슷한 질문/말은 하나로 클러스터링).
+    반환: [{"topic": str, "count": int}, ...] 또는 내용/LLM이 부족하면 None."""
+    if not chat_texts:
+        return None
+    joined = "\n".join(chat_texts)
+    raw = await _call_llm(HOT_TOPIC_PROMPT.format(content=joined[-4000:]))
+    return _parse_hot_topics_json(raw) if raw else None
