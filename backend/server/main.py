@@ -22,8 +22,7 @@ import collections
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from analyzer import analyze_batch
-from audio_stream import capture_audio_chunk
-from captions import transcribe_audio
+from live_captions import get_caption_track, poll_new_captions
 from summarizer import summarize_context
 from youtube import get_live_chat_id
 from youtube_stream import stream_chat
@@ -40,8 +39,7 @@ INPUT_MAX = 200
 FLUSH_INTERVAL = 1.2   # 초. 이 주기로 모아서 배치 분석
 BUF_CAP = 500          # 버퍼 상한 (분석이 느릴 때 무한 증가 방지)
 SUMMARY_COOLDOWN_SEC = 60  # "최근" 탭 새로고침 쿨다운 — LLM 비용이 드는 쪽만 적용
-CAPTION_CHUNK_SEC = 60     # 한 번에 캡처하는 오디오 길이(초)
-CAPTION_INTERVAL_SEC = 90  # 캡처 주기(초) — 캡처 길이보다 여유 있게 둬서 겹치지 않게 함
+CAPTION_POLL_SEC = 20      # 자막 매니페스트가 최근 30초 안팎의 윈도우만 보여주므로 그보다 짧게 폴링
 
 rooms = {}
 
@@ -84,14 +82,14 @@ class Room:
         self._mood_total = 0
 
     async def run(self):
-        # 오디오 캡처(_caption_loop)는 유튜브 채팅 API(get_live_chat_id)와 완전히 독립적이라
+        # 자막 폴링(_caption_loop)은 유튜브 채팅 API(get_live_chat_id)와 완전히 독립적이라
         # 채팅 조회 성공 여부와 무관하게 항상 시작한다.
         caption = asyncio.create_task(self._caption_loop())
         try:
             chat_id = await asyncio.to_thread(get_live_chat_id, self.video_id)
         except Exception as e:
             # 라이브가 아니거나 조회 실패 → 채팅 스트림은 못 열지만 클라이언트는 유지
-            # (backfill·키워드 필터·오디오 기반 요약은 계속 동작). 방은 마지막 클라 나갈 때 정리됨.
+            # (backfill·키워드 필터·자막 기반 요약은 계속 동작). 방은 마지막 클라 나갈 때 정리됨.
             print(f"[room {self.video_id}] chat_id 실패(스트림 없음): {e}")
             try:
                 await caption
@@ -123,17 +121,19 @@ class Room:
             await self._flush()
 
     async def _caption_loop(self):
-        """방송 오디오를 주기적으로 캡처해 전사한 뒤 _caption_texts에 누적한다.
-        실패(캡처/전사 실패)해도 이번 주기만 건너뛰고 계속 재시도 — 실패가 계속되면
-        _caption_texts가 계속 비어있어 request_summary()는 채팅 기반으로 자동 진행된다."""
+        """유튜브 자동 자막을 주기적으로 폴링해 _caption_texts에 누적한다.
+        이 방송에 자막이 아예 없으면 곧바로 끝남 — request_summary()는 채팅 기반으로
+        자동 진행된다(_recv가 채우는 _context_texts는 이 루프와 무관하게 항상 채워짐)."""
+        track = await get_caption_track(self.video_id)
+        if not track:
+            return
+        _, manifest_url = track
+        last_sq = 0
         while True:
-            await asyncio.sleep(CAPTION_INTERVAL_SEC)
-            audio = await capture_audio_chunk(self.video_id, CAPTION_CHUNK_SEC)
-            if not audio:
-                continue
-            text = await transcribe_audio(audio)
+            text, last_sq = await poll_new_captions(manifest_url, last_sq)
             if text:
                 self._caption_texts.append(text)
+            await asyncio.sleep(CAPTION_POLL_SEC)
 
     async def _flush(self):
         async with self._lock:
