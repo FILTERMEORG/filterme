@@ -2,7 +2,7 @@
 <html lang="ko"><head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="YouTube Live 채팅을 실시간으로 걸러주는 AI 필터 크롬 확장 프로그램 FILTERME 소개 페이지">
+<meta name="description" content="YouTube Live 채팅을 실시간으로 필터링·자동 번역하고 AI 매니저로 방송 흐름을 따라잡게 해주는 크롬 확장 프로그램 FILTERME 소개 페이지">
 <title>FILTERME</title>
 <style>
 
@@ -149,15 +149,22 @@ h1.headline .accent{color:var(--accent);}
 .section-title{font-size:clamp(24px,3.4vw,34px);font-weight:800;letter-spacing:-.6px;margin:0 0 12px;}
 .section-sub{font-size:15px;color:var(--text-secondary);line-height:1.7;}
 
-/* ---------- value props ---------- */
-.value-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:20px;}
-.value-card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:26px 22px;}
-.value-icon{
-  width:42px;height:42px;border-radius:11px;background:var(--accent-bg);color:var(--accent);
-  display:flex;align-items:center;justify-content:center;font-size:19px;margin-bottom:16px;
+/* ---------- core features ---------- */
+.feature-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:20px;}
+.feature-card{
+  background:var(--card);border:1px solid var(--border);border-radius:16px;padding:32px 28px;
+  transition:border-color .15s,transform .15s;
 }
-.value-card h3{font-size:15.5px;font-weight:800;margin:0 0 8px;}
-.value-card p{font-size:13.5px;color:var(--text-secondary);margin:0;line-height:1.7;}
+.feature-card:hover{border-color:var(--accent);transform:translateY(-3px);}
+.feature-head{display:flex;align-items:center;gap:10px;margin-bottom:16px;}
+.feature-head .num{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;color:var(--text-tertiary);}
+.feature-head .tag{font-size:11px;font-weight:800;color:var(--accent);text-transform:uppercase;letter-spacing:.6px;}
+.feature-card h3{font-size:20px;font-weight:800;margin:0 0 12px;}
+.feature-card .desc{font-size:13.5px;color:var(--text-secondary);margin:0 0 20px;line-height:1.7;}
+.feature-card hr{border:none;border-top:1px solid var(--border);margin:0 0 16px;}
+.feature-list{list-style:none;margin:0;padding:0;}
+.feature-list li{position:relative;padding-left:16px;color:var(--text-secondary);font-size:13px;line-height:2;}
+.feature-list li::before{content:"";position:absolute;left:0;top:9px;width:6px;height:6px;background:var(--accent);}
 
 /* ---------- filter categories ---------- */
 .filter-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:20px;}
@@ -262,7 +269,7 @@ footer .f-note{font-size:12px;color:var(--text-tertiary);}
     <div>
       <span class="eyebrow"><span class="dot"></span>실시간 AI 라이브 채팅 필터</span>
       <h1 class="headline">보고 싶은 채팅만,<br>보이게 하세요<span class="accent">.</span></h1>
-      <p class="hero-sub">욕설, 정치 발언, 성적 표현, 도배&nbsp;— AI가 채팅을 실시간으로 분석하고, 무엇을 숨길지는 당신이 정합니다. YouTube Live 시청자를 위한 개인용 채팅 필터.</p>
+      <p class="hero-sub">AI가 채팅을 실시간으로 걸러주고, 외국어 채팅은 자동으로 번역하고, 방송 흐름은 AI 매니저가 따라잡게 해줍니다. YouTube Live 시청자를 위한 개인용 AI 채팅 도구.</p>
       <div class="cta-row">
         <a class="btn btn-primary" href="https://chromewebstore.google.com/detail/mplobafhlibpdbadpbpfabeengdchjkf?utm_source=item-share-cb" target="_blank" rel="noopener">Chrome 웹스토어에서 설치</a>
         <a class="btn btn-ghost" href="#how">작동 방식 보기</a>
@@ -307,28 +314,46 @@ footer .f-note{font-size:12px;color:var(--text-tertiary);}
   </div>
 </header>
 
-<section id="why">
+<section id="features">
   <div class="wrap">
     <div class="section-head">
-      <div class="section-eyebrow">Why FILTERME</div>
-      <h2 class="section-title">채팅창, 이제 신경 쓰지 마세요</h2>
-      <p class="section-sub">방송에 집중하고 싶은데 도배와 욕설이 눈에 계속 들어온다면, FILTERME가 대신 걸러드립니다.</p>
+      <div class="section-eyebrow">CORE FEATURES</div>
+      <h2 class="section-title">세 가지 기능</h2>
+      <p class="section-sub">거르고, 넓히고, 따라잡게 합니다.</p>
     </div>
-    <div class="value-grid">
-      <div class="value-card">
-        <div class="value-icon">⚡</div>
-        <h3>실시간 처리</h3>
-        <p>채팅이 올라오는 즉시 AI가 분석해서, 화면에 뜨기 전 걸러낼 채팅을 판단해요.</p>
+    <div class="feature-grid">
+      <div class="feature-card">
+        <div class="feature-head"><span class="num">01</span><span class="tag">PERSONAL FILTER</span></div>
+        <h3>개인화 필터링</h3>
+        <p class="desc">AI가 채팅마다 항목별 0~100 점수를 매기고, 켠 항목이 임계값을 넘으면 가립니다. 판정은 내 브라우저에서 이뤄집니다.</p>
+        <hr>
+        <ul class="feature-list">
+          <li>욕설 · 정치 · 성적 표현 · 도배</li>
+          <li>항목별 ON / OFF 토글</li>
+          <li>블러 또는 차단 선택</li>
+        </ul>
       </div>
-      <div class="value-card">
-        <div class="value-icon">🔒</div>
-        <h3>채팅 기록 저장 안 함</h3>
-        <p>분석은 실시간으로만 이뤄지고, 채팅 내용은 어디에도 저장되지 않아요. 필터 기준만 브라우저에 남아요.</p>
+      <div class="feature-card">
+        <div class="feature-head"><span class="num">02</span><span class="tag">TRANSLATE</span></div>
+        <h3>국가 설정 · 자동 번역</h3>
+        <p class="desc">선택한 국가에 따라 화면 언어와 번역 기본값이 함께 바뀝니다. Chrome 내장 번역 API를 써서 별도 키가 필요 없습니다.</p>
+        <hr>
+        <ul class="feature-list">
+          <li>수신 — 외국어 채팅을 내 언어로</li>
+          <li>송신 — 내 채팅을 상대 언어로</li>
+          <li>채팅창 위 바에서 즉시 켜고 끄기</li>
+        </ul>
       </div>
-      <div class="value-card">
-        <div class="value-icon">🎵</div>
-        <h3>내 맘대로 설정</h3>
-        <p>항목별로 켜고 끄고, 걸러진 채팅은 블러 처리할지 완전히 숨길지도 직접 골라요.</p>
+      <div class="feature-card">
+        <div class="feature-head"><span class="num">03</span><span class="tag">AI MANAGER</span></div>
+        <h3>AI 매니저</h3>
+        <p class="desc">STT와 채팅 데이터를 함께 읽어, 방송 흐름과 채팅 맥락을 따라잡게 해줍니다. 채팅창 하단 플로팅 버튼으로 엽니다.</p>
+        <hr>
+        <ul class="feature-list">
+          <li>방송 요약 — STT + 채팅 데이터</li>
+          <li>Hot Topic — 지금 무슨 얘기 중인지</li>
+          <li>채팅방 분위기 — 항목별 비율</li>
+        </ul>
       </div>
     </div>
   </div>
@@ -385,7 +410,7 @@ footer .f-note{font-size:12px;color:var(--text-tertiary);}
   <div class="wrap">
     <div class="section-head">
       <div class="section-eyebrow">How it works</div>
-      <h2 class="section-title">작동 방식은 간단해요</h2>
+      <h2 class="section-title">필터링은 이렇게 작동해요</h2>
       <p class="section-sub">최종적으로 무엇을 숨길지는 항상 당신의 설정이 결정해요.</p>
     </div>
     <div class="steps">
