@@ -22,7 +22,7 @@ import collections
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from analyzer import analyze_batch
-from audio_stream import capture_audio_chunk
+from audio_stream import get_audio_url, capture_from_url
 from captions import transcribe_audio
 from live_captions import get_caption_track, poll_new_captions
 from summarizer import summarize_recent
@@ -177,10 +177,20 @@ class Room:
         """방송 오디오를 STT_CHUNK_SEC(60초)씩 캡처해 전사한다. STT_CHUNKS_PER_SUMMARY개
         (약 3분)가 모이면 그동안 쌓인 자막(있다면)까지 합쳐서 이전 요약과 함께 새 압축
         요약을 만들고 원본 텍스트는 버린다 — 그래서 계속 작게 유지된다. 채팅은 이 주기적
-        갱신엔 안 쓴다(접속 즉시 첫 요약용으로만 사용, 이후엔 핫토픽 전담)."""
+        갱신엔 안 쓴다(접속 즉시 첫 요약용으로만 사용, 이후엔 핫토픽 전담).
+
+        오디오 URL은 캐싱해서 재사용한다 — 캡처마다 yt-dlp로 새로 조회하면 유튜브
+        속도 제한에 걸리기 쉽다(URL 자체는 보통 몇 시간 유효함). 실패할 때만 새로 받는다."""
+        audio_url = None
         while True:
-            audio = await capture_audio_chunk(self.video_id, STT_CHUNK_SEC)
+            if audio_url is None:
+                audio_url = await get_audio_url(self.video_id)
+                if audio_url is None:
+                    await asyncio.sleep(5)
+                    continue
+            audio = await capture_from_url(audio_url, STT_CHUNK_SEC)
             if not audio:
+                audio_url = None  # 만료/실패 — 다음 루프에서 새로 조회
                 await asyncio.sleep(5)
                 continue
             text = await transcribe_audio(audio)
