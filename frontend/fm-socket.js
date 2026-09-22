@@ -45,7 +45,7 @@ function connectBackend() {
     ws.onmessage = (ev) => {
       let m;
       try { m = JSON.parse(ev.data); } catch (e) { return; }
-      if (m.type === 'summary' || m.type === 'mood') { onManagerServerMessage(m); return; } // fm-manager.js
+      if (m.type === 'summary' || m.type === 'mood' || m.type === 'hot_topics') { onManagerServerMessage(m); return; } // fm-manager.js
       if (m.type !== 'analysis') return;
       serverCat.set(norm(m.text), resultToCategory(m.result));
       reclassifyAllVisible();

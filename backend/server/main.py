@@ -184,8 +184,8 @@ class Room:
         for client in list(self.clients):
             try:
                 await client.send_json(msg)
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[room {self.video_id}] hot_topics 전송 실패: {e!r}")
 
     async def _update_analysis(self, new_text):
         async with self._summary_lock:
@@ -274,8 +274,8 @@ class Room:
         for client in list(self.clients):
             try:
                 await client.send_json(msg)
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[room {self.video_id}] stats 전송 실패: {e!r}")
 
     def _snapshot_message(self):
         if self._current_summary is None:
@@ -292,8 +292,8 @@ class Room:
         for client in list(self.clients):
             try:
                 await client.send_json(msg)
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[room {self.video_id}] summary 전송 실패: {e!r}")
 
 
 @app.websocket("/ws")
