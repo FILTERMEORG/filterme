@@ -384,8 +384,12 @@ async def ws(sock: WebSocket):
                         "text": text,
                         "result": result,
                     })
-    except (WebSocketDisconnect, Exception):
-        pass
+    except WebSocketDisconnect:
+        pass  # 정상 종료(새로고침/탭 닫기 등) — 로그 안 남김
+    except Exception as e:
+        # 정상 종료가 아닌 다른 예외 — 조용히 삼키면 진짜 버그가 "connection closed"로만
+        # 보여서 디버그가 안 되므로 반드시 찍는다.
+        print(f"[ws {video_id}] 예상치 못한 예외로 연결 종료: {e!r}")
     finally:
         room.clients.discard(sock)
         if not room.clients:
