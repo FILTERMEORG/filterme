@@ -85,6 +85,14 @@ function _renderBars(pct, entries) {
     </div>`).join('');
 }
 
+// 무드와 달리 언어 비율은 "전체 100%의 분포"라서 참고용 단일 스택 바 + 범례로 압축 표현
+function _renderStackBar(pct, entries) {
+  const segs = entries.map(([key, , color]) => `<div class="fm-mgr-stackbar-seg" style="width:${pct[key] || 0}%;background:${color}"></div>`).join('');
+  const legend = entries.map(([key, label, color]) => `
+    <span class="fm-mgr-legend-item"><i class="fm-mgr-legend-dot" style="background:${color}"></i>${label} ${pct[key] || 0}%</span>`).join('');
+  return `<div class="fm-mgr-stackbar">${segs}</div><div class="fm-mgr-legend">${legend}</div>`;
+}
+
 function renderMoodTab(pct, langPct) {
   if (!pct && !langPct) return _analyzingHtml(t('mgr_empty_mood'));
   const cats = [
@@ -99,7 +107,7 @@ function renderMoodTab(pct, langPct) {
     ? `<div class="fm-mgr-mood-note">${t('mgr_mood_note')}</div><div class="fm-mgr-bars">${_renderBars(pct, cats)}</div>`
     : '';
   const langSection = langPct
-    ? `<div class="fm-mgr-status fm-mgr-bullets-label">${t('mgr_lang_title')}</div><div class="fm-mgr-bars">${_renderBars(langPct, langs)}</div>`
+    ? `<div class="fm-mgr-status fm-mgr-bullets-label">${t('mgr_lang_title')}</div>${_renderStackBar(langPct, langs)}`
     : '';
   return moodSection + langSection;
 }

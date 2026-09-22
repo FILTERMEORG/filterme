@@ -566,6 +566,11 @@ const STYLE = `
   .fm-mgr-bar{width:100%;min-height:2px;border-radius:4px 4px 0 0;}
   .fm-mgr-bar-pct{font-size:10px;color:#fff;font-weight:700;}
   .fm-mgr-bar-label{font-size:9.5px;color:var(--fm-text-secondary);white-space:nowrap;}
+  .fm-mgr-stackbar{display:flex;height:10px;border-radius:5px;overflow:hidden;background:var(--fm-border);}
+  .fm-mgr-stackbar-seg{height:100%;}
+  .fm-mgr-legend{display:flex;flex-wrap:wrap;gap:6px 10px;margin-top:8px;}
+  .fm-mgr-legend-item{display:flex;align-items:center;gap:4px;font-size:10.5px;color:var(--fm-text-secondary);white-space:nowrap;}
+  .fm-mgr-legend-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;}
 
   /* ---- 전체 설정 모달: 플로팅 버튼 클릭 시 그 자리에서 바로 열림 ---- */
   .fm-backdrop{
