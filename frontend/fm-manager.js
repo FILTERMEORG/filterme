@@ -71,14 +71,10 @@ function renderRecentTab(payload) {
   }
   const intro = payload.source === 'captions' ? t('mgr_intro_confident') : t('mgr_intro_guess');
   const bullets = (payload.bullets || []).map((b) => `<div class="fm-mgr-bullet">· ${intro} ${b}</div>`).join('');
-  const timeline = (payload.timeline || [])
-    .map((tl) => `<div class="fm-mgr-tl-row"><span class="fm-mgr-tl-time">${tl.time}</span> ${tl.text}</div>`)
-    .join('');
   const status = payload.cached ? t('mgr_status_cached') : t('mgr_status_now');
   return `
     <div class="fm-mgr-status">${status}</div>
-    ${bullets}
-    <div class="fm-mgr-tl">${timeline}</div>`;
+    ${bullets}`;
 }
 
 function renderMoodTab(pct) {

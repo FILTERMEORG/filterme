@@ -557,9 +557,6 @@ const STYLE = `
   }
   .fm-mgr-status{font-size:10.5px;color:var(--fm-text-secondary);margin-bottom:8px;}
   .fm-mgr-bullet{font-size:12.5px;color:#fff;line-height:1.6;margin-bottom:4px;}
-  .fm-mgr-tl{margin-top:10px;border-top:1px solid var(--fm-border);padding-top:8px;}
-  .fm-mgr-tl-row{font-size:11.5px;color:var(--fm-text-secondary);line-height:1.7;}
-  .fm-mgr-tl-time{color:#7F77DD;font-weight:700;margin-right:4px;}
   .fm-mgr-mood-note{font-size:10.5px;color:var(--fm-text-secondary);margin-bottom:12px;}
   .fm-mgr-bars{display:flex;gap:8px;align-items:flex-end;}
   .fm-mgr-bar-col{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;}

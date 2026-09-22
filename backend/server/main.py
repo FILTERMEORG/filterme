@@ -211,7 +211,6 @@ class Room:
                 "available": True,
                 "source": self.last_summary["source"],
                 "bullets": self.last_summary["bullets"],
-                "timeline": self.last_summary["timeline"],
                 "cached": cached,
             }
         for client in list(self.clients):
@@ -234,7 +233,7 @@ async def ws(sock: WebSocket):
         {"type": "analysis", "author": str, "text": str,
          "result": {"normal","profanity","political","sexual","spam"}}  # 각 0~100
     서버 → 클라이언트 (신규)
-        {"type": "summary", "available": bool, "source"?, "bullets"?, "timeline"?, "cached"?}
+        {"type": "summary", "available": bool, "source"?, "bullets"?, "cached"?}
         {"type": "mood", "percentages": {...}}  # 쿨다운 없이 flush 주기(1.2초)마다 자동 push
     """
     await sock.accept()
