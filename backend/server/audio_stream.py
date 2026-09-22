@@ -7,11 +7,25 @@ import asyncio
 import yt_dlp
 
 
+# 유튜브가 봇 탐지를 계속 강화하면서 특정 player_client 하나가 막히는 일이 잦다.
+# 여러 클라이언트를 순서대로 시도해서 하나라도 되면 쓴다.
+_PLAYER_CLIENTS = ["android", "ios", "web", "tv"]
+
+
 def _get_audio_url(video_id: str) -> str:
-    opts = {"format": "bestaudio/best", "quiet": True, "no_warnings": True}
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
-    return info["url"]
+    last_error = None
+    for client in _PLAYER_CLIENTS:
+        opts = {
+            "format": "bestaudio/best", "quiet": True, "no_warnings": True,
+            "extractor_args": {"youtube": {"player_client": [client]}},
+        }
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
+            return info["url"]
+        except Exception as e:
+            last_error = e
+    raise last_error
 
 
 async def capture_audio_chunk(video_id: str, seconds: int) -> bytes | None:
