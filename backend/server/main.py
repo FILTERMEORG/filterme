@@ -42,6 +42,8 @@ FLUSH_INTERVAL = 1.2   # 초. 이 주기로 모아서 배치 분석
 BUF_CAP = 500          # 버퍼 상한 (분석이 느릴 때 무한 증가 방지)
 STT_CHUNK_SEC = 60          # 한 번에 캡처하는 오디오 길이(초)
 STT_CHUNKS_PER_SUMMARY = 3  # 이 개수(약 3분)만큼 모이면 요약을 갱신
+STT_RETRY_BASE_SEC = 30     # 오디오 URL 조회 실패 시 첫 재시도까지 대기(초) — 지수적으로 증가
+STT_RETRY_MAX_SEC = 300     # 재시도 간격 상한(초) — 계속 실패해도 5분마다로 수렴
 CAPTION_POLL_SEC = 20        # 자막 매니페스트가 최근 30초 안팎의 윈도우만 보여주므로 그보다 짧게 폴링
 MIN_CHAT_FOR_KICKOFF = 5     # 자막이 없을 때, 접속 즉시 요약을 시도하기 위한 최소 채팅 수
 STATS_BROADCAST_SEC = 7      # 채팅 분위기/언어 비율 push 주기 — 집계는 채팅마다 하되 화면 갱신만 이만큼 뜸하게
@@ -180,18 +182,26 @@ class Room:
         갱신엔 안 쓴다(접속 즉시 첫 요약용으로만 사용, 이후엔 핫토픽 전담).
 
         오디오 URL은 캐싱해서 재사용한다 — 캡처마다 yt-dlp로 새로 조회하면 유튜브
-        속도 제한에 걸리기 쉽다(URL 자체는 보통 몇 시간 유효함). 실패할 때만 새로 받는다."""
+        속도 제한에 걸리기 쉽다(URL 자체는 보통 몇 시간 유효함). 실패할 때만 새로 받는다.
+
+        실패가 계속되면(예: 이 서버 IP가 막힌 상태) 재시도 간격을 지수적으로 늘린다 —
+        5초마다 계속 두드리면 스레드 풀 자리를 오래 붙잡아서 서버 전체(health check
+        포함)가 먹통이 될 수 있다. 성공하면 다시 짧은 간격으로 돌아간다."""
         audio_url = None
+        retry_delay = STT_RETRY_BASE_SEC
         while True:
             if audio_url is None:
                 audio_url = await get_audio_url(self.video_id)
                 if audio_url is None:
-                    await asyncio.sleep(5)
+                    await asyncio.sleep(retry_delay)
+                    retry_delay = min(retry_delay * 2, STT_RETRY_MAX_SEC)
                     continue
+            retry_delay = STT_RETRY_BASE_SEC
             audio = await capture_from_url(audio_url, STT_CHUNK_SEC)
             if not audio:
                 audio_url = None  # 만료/실패 — 다음 루프에서 새로 조회
-                await asyncio.sleep(5)
+                await asyncio.sleep(retry_delay)
+                retry_delay = min(retry_delay * 2, STT_RETRY_MAX_SEC)
                 continue
             text = await transcribe_audio(audio)
             if not text:

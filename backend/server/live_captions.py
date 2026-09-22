@@ -23,6 +23,9 @@ def _extract_caption_track(video_id: str):
         opts = {
             "quiet": True, "no_warnings": True,
             "extractor_args": {"youtube": {"player_client": [client]}},
+            # 클라이언트 하나가 응답을 안 주고 계속 물고 늘어지면 스레드 풀 자리를
+            # 오래 붙잡아서 서버 전체가 먹통이 될 수 있다 — 시도당 최대 대기 시간을 못 박는다.
+            "socket_timeout": 10,
         }
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
