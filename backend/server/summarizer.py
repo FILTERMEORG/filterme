@@ -1,7 +1,10 @@
 """요약 생성 — LLM 제공자는 아직 미정, provider를 환경변수로 분리.
 
-방송요약은 "압축 롤링 요약" 방식이다: 이전 요약 + 새로 들어온 STT 텍스트를 합쳐서
+방송요약은 "압축 롤링 요약" 방식이다: 이전 요약 + 새로 들어온 텍스트를 합쳐서
 매번 새 요약을 만들고, 원본 텍스트는 버린다. 그래서 메모리에 계속 쌓이는 게 없다.
+입력 텍스트는 상황에 따라 자막/채팅(접속 직후 빠른 첫 요약용)이거나 STT(이후 갱신용)인데,
+프롬프트는 출처를 구분하지 않는다 — 어느 쪽이든 "AI가 방송을 직접 보고 정리한 것"처럼
+자신 있게 서술하도록 강제한다(채팅/자막에서 봤다는 티를 내지 않음).
 """
 import json
 import os
@@ -24,18 +27,25 @@ _SUMMARY_SCHEMA_NOTE = (
     f"bullets는 가장 핵심적인 내용만 최대 {_MAX_BULLETS}개까지만 담아주세요."
 )
 
+_NO_SOURCE_RULE = (
+    "당신은 이 라이브 방송을 직접 보고 있는 것처럼 방송 내용을 정리합니다. "
+    "입력이 채팅 로그든, 자막이든, 음성 전사든 그 출처를 절대 언급하지 마세요 "
+    "('채팅에서', '채팅 반응을 보면', '시청자들이', '자막에 따르면' 같은 표현 금지). "
+    "실제로 방송에서 있었던 일을 직접 본 것처럼 확신 있게 서술해주세요."
+)
+
 SUMMARY_PROMPT_FIRST = (
-    "다음은 라이브 방송에서 스트리머가 실제로 말한 내용을 받아적은 음성 전사입니다. "
-    "지금까지 어떤 이야기가 있었는지 정리해주세요. " + _SUMMARY_SCHEMA_NOTE +
-    "\n\n전사:\n{content}"
+    _NO_SOURCE_RULE + " 다음 내용을 참고해서 지금까지 방송에서 어떤 이야기가 있었는지 "
+    "정리해주세요. " + _SUMMARY_SCHEMA_NOTE +
+    "\n\n내용:\n{content}"
 )
 SUMMARY_PROMPT_UPDATE = (
-    "다음은 라이브 방송 요약을 갱신하는 작업입니다. 이전 요약과 그 이후 새로 들어온 "
-    "음성 전사를 참고해서, 최신 상황을 반영한 새 요약을 만들어주세요. "
+    _NO_SOURCE_RULE + " 다음은 방송 요약을 갱신하는 작업입니다. 이전 요약과 그 이후 "
+    "새로 들어온 내용을 참고해서, 최신 상황을 반영한 새 요약을 만들어주세요. "
     "이미 지난 화제는 굳이 유지하지 말고, 지금 방송에서 진행 중인 내용 위주로 "
     "정리해주세요. " + _SUMMARY_SCHEMA_NOTE +
     "\n\n이전 요약:\n주제: {prev_topic}\n{prev_bullets}"
-    "\n\n새로 들어온 전사:\n{content}"
+    "\n\n새로 들어온 내용:\n{content}"
 )
 
 
@@ -92,7 +102,7 @@ def _parse_summary_json(raw: str) -> dict | None:
 
 
 async def summarize_recent(previous: dict | None, new_text: str) -> dict | None:
-    """방송 STT 텍스트로 "지금 무슨 이야기 중" 요약을 만들거나 갱신한다.
+    """자막/채팅/STT 텍스트로 "지금 무슨 이야기 중" 요약을 만들거나 갱신한다.
     previous: 이전 summarize_recent() 결과({"topic","bullets"}) 또는 첫 요약이면 None.
     반환: {"topic": str, "bullets": [...]} 또는 내용/LLM이 부족하면 None."""
     if not new_text or not new_text.strip():
