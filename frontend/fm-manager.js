@@ -7,7 +7,8 @@
 let _managerState = {
   tab: 'recent',        // 'recent' | 'mood'
   summary: null,        // 서버가 보낸 마지막 summary payload
-  mood: null            // 서버가 보낸 마지막 mood percentages
+  mood: null,           // 서버가 보낸 마지막 mood percentages
+  languages: null       // 서버가 보낸 마지막 시청자 언어 percentages
 };
 
 function buildManagerPanel() {
@@ -48,7 +49,7 @@ function renderManagerBody() {
   });
 
   if (_managerState.tab === 'mood') {
-    els.fmMgrBody.innerHTML = renderMoodTab(_managerState.mood);
+    els.fmMgrBody.innerHTML = renderMoodTab(_managerState.mood, _managerState.languages);
   } else {
     els.fmMgrBody.innerHTML = renderRecentTab(_managerState.summary);
   }
@@ -75,20 +76,32 @@ function renderRecentTab(payload) {
     <div class="fm-mgr-footer">${t('mgr_footer_note')}</div>`;
 }
 
-function renderMoodTab(pct) {
-  if (!pct) return _analyzingHtml(t('mgr_empty_mood'));
-  const cats = [
-    ['normal', t('mgr_cat_normal'), '#1D9E75'], ['profanity', t('mgr_cat_profanity'), '#D85A30'],
-    ['spam', t('mgr_cat_spam'), '#BA7517'], ['sexual', t('mgr_cat_sexual'), '#D4537E'], ['political', t('mgr_cat_political'), '#7F77DD']
-  ];
-  const bars = cats.map(([key, label, color]) => `
+function _renderBars(pct, entries) {
+  return entries.map(([key, label, color]) => `
     <div class="fm-mgr-bar-col">
       <span class="fm-mgr-bar-pct">${pct[key] || 0}%</span>
       <div class="fm-mgr-bar-track"><div class="fm-mgr-bar" style="height:${Math.max(pct[key] || 0, 2)}%;background:${color}"></div></div>
       <span class="fm-mgr-bar-label">${label}</span>
     </div>`).join('');
-  return `<div class="fm-mgr-mood-note">${t('mgr_mood_note')}</div>
-    <div class="fm-mgr-bars">${bars}</div>`;
+}
+
+function renderMoodTab(pct, langPct) {
+  if (!pct && !langPct) return _analyzingHtml(t('mgr_empty_mood'));
+  const cats = [
+    ['normal', t('mgr_cat_normal'), '#1D9E75'], ['profanity', t('mgr_cat_profanity'), '#D85A30'],
+    ['spam', t('mgr_cat_spam'), '#BA7517'], ['sexual', t('mgr_cat_sexual'), '#D4537E'], ['political', t('mgr_cat_political'), '#7F77DD']
+  ];
+  const langs = [
+    ['ko', t('mgr_lang_ko'), '#4F9DDE'], ['ja', t('mgr_lang_ja'), '#E85D75'],
+    ['zh', t('mgr_lang_zh'), '#F2B84B'], ['en', t('mgr_lang_en'), '#57C785'], ['other', t('mgr_lang_other'), '#9C9FA6']
+  ];
+  const moodSection = pct
+    ? `<div class="fm-mgr-mood-note">${t('mgr_mood_note')}</div><div class="fm-mgr-bars">${_renderBars(pct, cats)}</div>`
+    : '';
+  const langSection = langPct
+    ? `<div class="fm-mgr-status fm-mgr-bullets-label">${t('mgr_lang_title')}</div><div class="fm-mgr-bars">${_renderBars(langPct, langs)}</div>`
+    : '';
+  return moodSection + langSection;
 }
 
 function openManagerPanel() {
@@ -119,5 +132,9 @@ function wireManagerEvents() {
 // fm-socket.js의 onmessage가 호출
 function onManagerServerMessage(m) {
   if (m.type === 'summary') { _managerState.summary = m; renderManagerBody(); }
-  else if (m.type === 'mood') { _managerState.mood = m.percentages; renderManagerBody(); }
+  else if (m.type === 'mood') {
+    if (m.percentages) _managerState.mood = m.percentages;
+    if (m.languages) _managerState.languages = m.languages;
+    renderManagerBody();
+  }
 }

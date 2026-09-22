@@ -44,6 +44,7 @@ STT_CHUNK_SEC = 60          # 한 번에 캡처하는 오디오 길이(초)
 STT_CHUNKS_PER_SUMMARY = 3  # 이 개수(약 3분)만큼 모이면 요약을 갱신
 CAPTION_POLL_SEC = 20        # 자막 매니페스트가 최근 30초 안팎의 윈도우만 보여주므로 그보다 짧게 폴링
 MIN_CHAT_FOR_KICKOFF = 5     # 자막이 없을 때, 접속 즉시 요약을 시도하기 위한 최소 채팅 수
+STATS_BROADCAST_SEC = 7      # 채팅 분위기/언어 비율 push 주기 — 집계는 채팅마다 하되 화면 갱신만 이만큼 뜸하게
 
 rooms = {}
 
@@ -55,6 +56,29 @@ def _total_clients():
 def _dup_key(t):
     """동일 메시지 판단용 정규화 (도배 감지). 공백 제거 + 소문자."""
     return re.sub(r"\s+", "", (t or "").lower())
+
+
+_HANGUL_RE = re.compile(r"[가-힣ᄀ-ᇿ㄰-㆏]")
+_KANA_RE = re.compile(r"[぀-ゟ゠-ヿ]")
+_CJK_RE = re.compile(r"[一-鿿]")
+_LATIN_RE = re.compile(r"[A-Za-z]")
+
+
+def _detect_lang(t):
+    """유니코드 문자 범위만으로 대략적인 언어를 추정한다 (LLM 호출 없음, 비용 없음).
+    가나(히라가나/가타카나)가 있으면 한자가 섞여 있어도 일본어로 본다 —
+    한자만으로는 중국어/일본어를 구분할 수 없어서 가나 유무를 우선 신호로 쓴다."""
+    if not t:
+        return "other"
+    if _KANA_RE.search(t):
+        return "ja"
+    counts = {
+        "ko": len(_HANGUL_RE.findall(t)),
+        "zh": len(_CJK_RE.findall(t)),
+        "en": len(_LATIN_RE.findall(t)),
+    }
+    best = max(counts, key=counts.get)
+    return best if counts[best] > 0 else "other"
 
 
 @app.get("/health")
@@ -87,6 +111,8 @@ class Room:
 
         self._mood_counts = {"normal": 0, "profanity": 0, "political": 0, "sexual": 0, "spam": 0}
         self._mood_total = 0
+        self._lang_counts = {"ko": 0, "ja": 0, "zh": 0, "en": 0, "other": 0}
+        self._lang_total = 0
 
     async def run(self):
         # STT 캡처(_stt_loop)·자막 폴링(_caption_loop)은 유튜브 채팅 API(get_live_chat_id)와
@@ -108,13 +134,15 @@ class Room:
 
         recv = asyncio.create_task(self._recv(chat_id))
         flush = asyncio.create_task(self._flush_loop())
+        stats = asyncio.create_task(self._stats_loop())
         try:
-            await asyncio.gather(recv, flush, stt, caption)
+            await asyncio.gather(recv, flush, stt, caption, stats)
         finally:
             recv.cancel()
             flush.cancel()
             stt.cancel()
             caption.cancel()
+            stats.cancel()
 
     async def _recv(self, chat_id):
         async for author, text in stream_chat(chat_id):
@@ -215,6 +243,10 @@ class Room:
                 self._mood_counts[top_cat] += 1
                 self._mood_total += 1
 
+                lang = _detect_lang(text)
+                self._lang_counts[lang] += 1
+                self._lang_total += 1
+
                 msg = {"type": "analysis", "author": author, "text": text, "result": result}
                 for client in list(self.clients):
                     try:
@@ -230,14 +262,40 @@ class Room:
                 # 여러 번 감쇠되는 동안 퍼센트 합이 서서히 100%에서 벗어난다.
                 self._mood_total = sum(self._mood_counts.values())
 
-            if self._mood_total:
-                pct = {c: round(self._mood_counts[c] / self._mood_total * 100) for c in cats}
-                mood_msg = {"type": "mood", "percentages": pct}
-                for client in list(self.clients):
-                    try:
-                        await client.send_json(mood_msg)
-                    except Exception:
-                        pass
+            if self._lang_total > 500:
+                for lang in self._lang_counts:
+                    self._lang_counts[lang] //= 2
+                self._lang_total = sum(self._lang_counts.values())
+
+            # mood/language 자체는 broadcast 안 함 — _stats_loop이 몇 초에 한 번 묶어서 보낸다
+            # (집계는 채팅마다 하되 화면 갱신은 뜸하게, 1.2초마다 다시 그릴 필요는 없음).
+
+    async def _stats_loop(self):
+        while True:
+            await asyncio.sleep(STATS_BROADCAST_SEC)
+            await self._broadcast_stats()
+
+    def _stats_message(self):
+        if not self._mood_total and not self._lang_total:
+            return None
+        cats = ("normal", "profanity", "political", "sexual", "spam")
+        langs = ("ko", "ja", "zh", "en", "other")
+        msg = {"type": "mood"}
+        if self._mood_total:
+            msg["percentages"] = {c: round(self._mood_counts[c] / self._mood_total * 100) for c in cats}
+        if self._lang_total:
+            msg["languages"] = {l: round(self._lang_counts[l] / self._lang_total * 100) for l in langs}
+        return msg
+
+    async def _broadcast_stats(self):
+        msg = self._stats_message()
+        if msg is None:
+            return
+        for client in list(self.clients):
+            try:
+                await client.send_json(msg)
+            except Exception:
+                pass
 
     def _snapshot_message(self):
         if self._current_summary is None:
@@ -274,7 +332,8 @@ async def ws(sock: WebSocket):
         # 첫 요약은 자막/채팅으로 접속 직후 빠르게 뜨고(둘 다 없으면 available:false 유지),
         # 이후 STT_CHUNKS_PER_SUMMARY개(약 3분)가 모일 때마다 자막+STT로 서버가 알아서
         # 다시 push한다 — 클라이언트가 새로고침을 요청하는 프로토콜은 없다.
-        {"type": "mood", "percentages": {...}}  # 쿨다운 없이 flush 주기(1.2초)마다 자동 push
+        {"type": "mood", "percentages"?: {...}, "languages"?: {...}}
+        # 집계는 채팅마다 하지만 push는 STATS_BROADCAST_SEC(약 7초)마다 한 번, 접속 시 1회 추가 전송
     """
     await sock.accept()
     try:
@@ -304,6 +363,9 @@ async def ws(sock: WebSocket):
         asyncio.create_task(room._maybe_kickoff_summary())
     try:
         await sock.send_json(room._snapshot_message())
+        stats_msg = room._stats_message()
+        if stats_msg is not None:
+            await sock.send_json(stats_msg)
     except Exception:
         pass
 
