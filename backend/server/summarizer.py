@@ -18,12 +18,18 @@ LLM_API_KEY = os.getenv("FM_LLM_API_KEY", "")
 LLM_MODEL = os.getenv("FM_LLM_MODEL", "")
 
 _MAX_BULLETS = 3
+_MAX_HOT_TOPICS = 5
 
 _SUMMARY_SCHEMA_NOTE = (
     "다음 JSON 형식으로만 응답하세요. 다른 텍스트나 코드블록 없이 JSON 객체 하나만 출력합니다:\n"
     '{{"topic": "지금 하고 있는 이야기를 한 문장으로", '
-    '"bullets": ["핵심 내용 1", "핵심 내용 2", "핵심 내용 3"]}}\n'
-    f"bullets는 가장 핵심적인 내용만 최대 {_MAX_BULLETS}개까지만 담아주세요."
+    '"bullets": ["핵심 내용 1", "핵심 내용 2", "핵심 내용 3"], '
+    '"hot_topics": [{{"topic": "주제 이름", "count": 정수}}, ...]}}\n'
+    f"bullets는 가장 핵심적인 내용만 최대 {_MAX_BULLETS}개까지만 담아주세요. "
+    "hot_topics는 표현이 달라도 같은 걸 묻거나 말하는 채팅은 하나의 주제로 묶어서 "
+    "(예: '신캐 언제 나와요?', '출시일 언제?', '신캐 날짜 공개됨?' → '신캐 출시일' 하나로), "
+    "지금 채팅에서 가장 많이 언급되는 주제를 언급 빈도가 높은 순으로 최대 "
+    f"{_MAX_HOT_TOPICS}개까지, count(그 주제에 해당하는 채팅이 대략 몇 개인지)와 함께 담아주세요."
 )
 
 _NO_SOURCE_RULE = (
@@ -94,6 +100,8 @@ def _parse_summary_json(raw: str) -> dict | None:
         if isinstance(data.get("topic"), str) and isinstance(data.get("bullets"), list):
             # 프롬프트로 개수를 요청해도 LLM이 안 지킬 수 있어 서버에서 한 번 더 강제로 자른다.
             data["bullets"] = data["bullets"][:_MAX_BULLETS]
+            hot_topics = data.get("hot_topics")
+            data["hot_topics"] = hot_topics[:_MAX_HOT_TOPICS] if isinstance(hot_topics, list) else []
             return data
     except Exception:
         pass
@@ -101,9 +109,11 @@ def _parse_summary_json(raw: str) -> dict | None:
 
 
 async def summarize_recent(previous: dict | None, new_text: str) -> dict | None:
-    """채팅 텍스트로 "지금 무슨 이야기 중" 요약을 만들거나 갱신한다.
+    """채팅 텍스트로 "지금 무슨 이야기 중" 방송요약과 핫토픽을 한 번의 LLM 호출로
+    같이 만들거나 갱신한다.
     previous: 이전 summarize_recent() 결과({"topic","bullets"}) 또는 첫 요약이면 None.
-    반환: {"topic": str, "bullets": [...]} 또는 내용/LLM이 부족하면 None."""
+    반환: {"topic": str, "bullets": [...], "hot_topics": [{"topic","count"}, ...]}
+    또는 내용/LLM이 부족하면 None."""
     if not new_text or not new_text.strip():
         return None
 
@@ -119,50 +129,3 @@ async def summarize_recent(previous: dict | None, new_text: str) -> dict | None:
 
     raw = await _call_llm(prompt)
     return _parse_summary_json(raw) if raw else None
-
-
-_MAX_HOT_TOPICS = 5
-
-_HOT_TOPIC_SCHEMA_NOTE = (
-    "다음 JSON 형식으로만 응답하세요. 다른 텍스트나 코드블록 없이 JSON 객체 하나만 출력합니다:\n"
-    '{{"topics": [{{"topic": "주제 이름", "count": 정수}}, ...]}}\n'
-    f"topics는 언급 빈도가 높은 순으로 최대 {_MAX_HOT_TOPICS}개까지만 담아주세요."
-)
-HOT_TOPIC_PROMPT = (
-    "다음은 라이브 방송 채팅 로그입니다. 표현이 달라도 같은 걸 묻거나 말하는 채팅은 "
-    "하나의 주제로 묶어주세요 (예: '신캐 언제 나와요?', '출시일 언제?', '신캐 날짜 공개됨?' "
-    "→ '신캐 출시일' 하나로). 지금 채팅에서 가장 많이 언급되는 주제를 뽑고, count는 "
-    "그 주제에 해당하는 채팅이 대략 몇 개인지 담아주세요. " + _HOT_TOPIC_SCHEMA_NOTE +
-    "\n\n채팅:\n{content}"
-)
-
-
-def _parse_hot_topics_json(raw: str) -> list[dict] | None:
-    cleaned = raw.strip()
-    if cleaned.startswith("```"):
-        cleaned = cleaned.strip("`")
-        cleaned = cleaned.split("\n", 1)[-1] if "\n" in cleaned else cleaned
-    try:
-        data = json.loads(cleaned)
-    except Exception as e:
-        # 조용히 실패하면 나중에 왜 안 뜨는지 알 방법이 없어서 반드시 로그를 남긴다.
-        print(f"[summarizer] 핫토픽 JSON 파싱 실패: {e} / 원본(300자): {raw[:300]!r}")
-        return None
-
-    # 스키마를 시켜도 LLM이 {"topics": [...]} 대신 그냥 [...]로 줄 때가 있어 둘 다 받아준다.
-    topics = data.get("topics") if isinstance(data, dict) else data
-    if isinstance(topics, list):
-        return topics[:_MAX_HOT_TOPICS]
-
-    print(f"[summarizer] 핫토픽 응답 형식이 예상과 다름: {raw[:300]!r}")
-    return None
-
-
-async def extract_hot_topics(chat_texts: list[str]) -> list[dict] | None:
-    """최근 채팅에서 자주 언급되는 주제를 뽑는다(비슷한 질문/말은 하나로 클러스터링).
-    반환: [{"topic": str, "count": int}, ...] 또는 내용/LLM이 부족하면 None."""
-    if not chat_texts:
-        return None
-    joined = "\n".join(chat_texts)
-    raw = await _call_llm(HOT_TOPIC_PROMPT.format(content=joined[-4000:]))
-    return _parse_hot_topics_json(raw) if raw else None
