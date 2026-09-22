@@ -37,8 +37,8 @@ INPUT_MAX = 200
 
 FLUSH_INTERVAL = 1.2   # 초. 이 주기로 모아서 배치 분석
 BUF_CAP = 500          # 버퍼 상한 (분석이 느릴 때 무한 증가 방지)
-CHAT_SUMMARY_INTERVAL_SEC = 180  # 방송요약을 이 주기(3분)마다 그 시점 채팅으로 갱신
-MIN_CHAT_FOR_KICKOFF = 5     # 접속 즉시 첫 요약을 시도하기 위한 최소 채팅 수
+CHAT_SUMMARY_INTERVAL_SEC = 180  # 방송요약을 이 주기(3분)마다 확인
+MIN_CHAT_FOR_KICKOFF = 5     # 첫 요약 시도 최소 채팅 수 + 재확인 시 "새로 쌓인 채팅" 최소 개수로도 재사용
 STATS_BROADCAST_SEC = 7      # 채팅 분위기/언어 비율 push 주기 — 집계는 채팅마다 하되 화면 갱신만 이만큼 뜸하게
 HOT_TOPIC_INTERVAL_SEC = 45  # 핫토픽 재계산 주기
 MIN_CHAT_FOR_HOT_TOPICS = 3   # 이보다 적으면 이번 주기는 건너뜀 (재료 부족) — 낮게 잡아서 뭐라도 빨리 뜨게 함
@@ -99,6 +99,8 @@ class Room:
         self._recent = collections.deque(maxlen=60)   # [(author, dup_key)] 최근 도배 판정용
 
         self._context_texts = collections.deque(maxlen=300)  # 채팅 모더레이션용 + 방송요약/핫토픽 공용 재료
+        self._context_total_seen = 0     # 누적 수신 채팅 수(절대 안 줄어듦) — "그 사이 새로 늘었는지" 판단용
+        self._last_summarized_seen = 0   # 마지막으로 요약이 실제 성공했을 때의 _context_total_seen 값
 
         self._current_summary = None   # summarize_recent()가 반환한 {"topic","bullets"} — 압축 롤링 요약
         self._summary_updated_at = 0.0
@@ -142,7 +144,9 @@ class Room:
             self._buf.append((author, trimmed))
             if len(self._buf) > BUF_CAP:
                 self._buf = self._buf[-BUF_CAP:]
+
             self._context_texts.append(trimmed)
+            self._context_total_seen += 1
 
     async def _flush_loop(self):
         while True:
@@ -150,15 +154,27 @@ class Room:
             await self._flush()
 
     async def _chat_summary_loop(self):
-        """CHAT_SUMMARY_INTERVAL_SEC(3분)마다 그 시점까지의 채팅으로 방송요약을 갱신한다.
-        자막/STT 없이 채팅만 쓴다 — 유튜브 쪽(yt-dlp) 의존이 전혀 없어서 유지보수 부담이
-        없다는 게 이 방식을 쓰는 이유. summarize_recent()의 프롬프트가 출처를 안 가려서
-        "채팅에서" 같은 티 안 내고 확신 있는 톤으로 나온다."""
+        """CHAT_SUMMARY_INTERVAL_SEC(3분)마다 확인하되, 마지막 분석 이후 새 채팅이
+        MIN_CHAT_FOR_KICKOFF(5)개 이상 쌓였을 때만 다시 분석한다 — 3분 됐다고 무조건
+        LLM을 부르면 조용한 방송에서 낭비라서, "새로 쌓인 양"을 조건으로 건다. 채팅이
+        많은 방송은 사실상 매 3분 갱신되고, 조용한 방송은 몇 주기를 건너뛰다가 쌓이면
+        그때 갱신된다."""
         while True:
             await asyncio.sleep(CHAT_SUMMARY_INTERVAL_SEC)
-            chat_text = "\n".join(self._context_texts) if self._context_texts else ""
-            if chat_text:
-                await self._update_summary(chat_text)
+            new_since = self._context_total_seen - self._last_summarized_seen
+            if new_since < MIN_CHAT_FOR_KICKOFF:
+                continue
+            await self._update_summary("\n".join(self._context_texts))
+
+    async def _maybe_kickoff_summary(self):
+        """접속 시점에 채팅으로 즉시 첫 요약을 만든다 — 3분 주기를 기다릴 필요 없음.
+        이미 요약이 있으면 아무것도 안 함(중복 호출 방지는 _current_summary 체크로 충분,
+        드물게 겹쳐도 _update_summary의 락이 LLM 중복 호출까지만 막아주면 됨)."""
+        if self._current_summary is not None:
+            return
+        if len(self._context_texts) < MIN_CHAT_FOR_KICKOFF:
+            return  # 아직 재료 부족 — 다음 접속 때 다시 시도되거나 3분 주기 루프가 처리함
+        await self._update_summary("\n".join(self._context_texts))
 
     async def _hot_topic_loop(self):
         """HOT_TOPIC_INTERVAL_SEC(45초)마다 _context_texts(최근 채팅, 방송요약과 공용)로
@@ -188,23 +204,13 @@ class Room:
             except Exception:
                 pass
 
-    async def _maybe_kickoff_summary(self):
-        """접속 시점에 채팅으로 즉시 첫 요약을 만든다 — 3분 주기를 기다릴 필요 없음.
-        이미 요약이 있으면 아무것도 안 함(중복 호출 방지는 _current_summary 체크로 충분,
-        드물게 겹쳐도 _update_summary의 락이 LLM 중복 호출까지만 막아주면 됨)."""
-        if self._current_summary is not None:
-            return
-        if len(self._context_texts) < MIN_CHAT_FOR_KICKOFF:
-            return  # 아직 재료 부족 — 다음 접속 때 다시 시도됨
-        chat_text = "\n".join(self._context_texts)
-        await self._update_summary(chat_text)
-
     async def _update_summary(self, new_text):
         async with self._summary_lock:
             summary = await summarize_recent(self._current_summary, new_text)
             if summary is not None:
                 self._current_summary = summary
                 self._summary_updated_at = time.time()
+                self._last_summarized_seen = self._context_total_seen
                 await self._broadcast_summary()
 
     async def _flush(self):
@@ -319,8 +325,9 @@ async def ws(sock: WebSocket):
     서버 → 클라이언트 (신규)
         {"type": "summary", "available": bool, "topic"?: str, "bullets"?: [str, ...]}
         # 첫 요약은 채팅이 MIN_CHAT_FOR_KICKOFF개 모이면 접속 직후 빠르게 뜨고,
-        # 이후 CHAT_SUMMARY_INTERVAL_SEC(3분)마다 서버가 알아서 다시 push한다 —
-        # 클라이언트가 새로고침을 요청하는 프로토콜은 없다.
+        # 이후 CHAT_SUMMARY_INTERVAL_SEC(3분)마다 그 사이 새 채팅이 MIN_CHAT_FOR_KICKOFF개
+        # 이상 쌓였으면 서버가 알아서 다시 push한다 — 클라이언트가 새로고침을 요청하는
+        # 프로토콜은 없다.
         {"type": "mood", "percentages"?: {...}, "languages"?: {...}}
         # 집계는 채팅마다 하지만 push는 STATS_BROADCAST_SEC(약 7초)마다 한 번, 접속 시 1회 추가 전송
         {"type": "hot_topics", "available": bool, "topics"?: [{"topic": str, "count": int}, ...]}

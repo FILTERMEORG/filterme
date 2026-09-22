@@ -69,13 +69,12 @@ function _analyzingHtml(label) {
 }
 
 function renderRecentTab(payload) {
-  if (!payload || payload.available === false) {
-    return _analyzingHtml(t('mgr_empty_recent'));
-  }
-  const bullets = (payload.bullets || []).map((b) => `<div class="fm-mgr-bullet">· ${b}</div>`).join('');
+  const available = !!payload && payload.available !== false;
+  const bullets = available ? (payload.bullets || []).map((b) => `<div class="fm-mgr-bullet">· ${b}</div>`).join('') : '';
+  const topic = available ? (payload.topic || '') : '';
   return `
     <div class="fm-mgr-status">${t('mgr_topic_label')}</div>
-    <div class="fm-mgr-topic">${payload.topic || ''}</div>
+    <div class="fm-mgr-topic">${topic}</div>
     <div class="fm-mgr-status fm-mgr-bullets-label">${t('mgr_bullets_label')}</div>
     ${bullets}
     <div class="fm-mgr-footer">${t('mgr_footer_note')}</div>`;
