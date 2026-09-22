@@ -144,11 +144,17 @@ def _parse_hot_topics_json(raw: str) -> list[dict] | None:
         cleaned = cleaned.split("\n", 1)[-1] if "\n" in cleaned else cleaned
     try:
         data = json.loads(cleaned)
-        topics = data.get("topics")
-        if isinstance(topics, list):
-            return topics[:_MAX_HOT_TOPICS]
-    except Exception:
-        pass
+    except Exception as e:
+        # 조용히 실패하면 나중에 왜 안 뜨는지 알 방법이 없어서 반드시 로그를 남긴다.
+        print(f"[summarizer] 핫토픽 JSON 파싱 실패: {e} / 원본(300자): {raw[:300]!r}")
+        return None
+
+    # 스키마를 시켜도 LLM이 {"topics": [...]} 대신 그냥 [...]로 줄 때가 있어 둘 다 받아준다.
+    topics = data.get("topics") if isinstance(data, dict) else data
+    if isinstance(topics, list):
+        return topics[:_MAX_HOT_TOPICS]
+
+    print(f"[summarizer] 핫토픽 응답 형식이 예상과 다름: {raw[:300]!r}")
     return None
 
 
