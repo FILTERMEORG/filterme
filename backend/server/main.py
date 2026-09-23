@@ -104,6 +104,8 @@ class Room:
         self._current_summary = None   # summarize_recent()가 반환한 {"topic","bullets"} — 압축 롤링 요약
         self._summary_updated_at = 0.0
         self._summary_lock = asyncio.Lock()  # 접속-즉시 트리거와 주기 갱신이 동시에 겹치지 않게
+        self._analyzed_once = False   # 첫 분석이 한 번이라도 성공했는지 — 한 번 True면 영구 True
+        self._analyzing = False       # 지금 이 순간 LLM 호출이 진행 중인지(프론트 "분석 중" 표시용)
 
         self._hot_topics = None  # summarize_recent()가 같은 호출에서 같이 반환한 [{"topic","count"}, ...] — 최신 결과만 유지
 
@@ -181,9 +183,10 @@ class Room:
         await self._update_analysis("\n".join(self._context_texts))
 
     def _hot_topics_message(self):
-        if not self._hot_topics:
-            return {"type": "hot_topics", "available": False}
-        return {"type": "hot_topics", "available": True, "topics": self._hot_topics}
+        if self._analyzed_once:
+            return {"type": "hot_topics", "available": True, "topics": self._hot_topics or []}
+        phase = "analyzing" if self._analyzing else "insufficient"
+        return {"type": "hot_topics", "available": False, "phase": phase}
 
     async def _broadcast_hot_topics(self):
         msg = self._hot_topics_message()
@@ -195,14 +198,26 @@ class Room:
 
     async def _update_analysis(self, new_text):
         async with self._summary_lock:
-            result = await summarize_recent(self._current_summary, new_text)
+            self._analyzing = True
+            if not self._analyzed_once:
+                # 첫 분석 전(아직 available:false)일 때만 "분석 중" 표시가 의미 있음 —
+                # 이미 결과가 있으면 재분석 중에도 기존 결과를 그대로 보여주는 게 맞아서
+                # 이 broadcast는 실질적으로 무시된다(_snapshot_message가 _analyzed_once
+                # 우선으로 판단하므로).
+                await self._broadcast_summary()
+                await self._broadcast_hot_topics()
+            try:
+                result = await summarize_recent(self._current_summary, new_text)
+            finally:
+                self._analyzing = False
             if result is not None:
                 self._current_summary = {"topic": result["topic"], "bullets": result["bullets"]}
                 self._hot_topics = result.get("hot_topics", [])
+                self._analyzed_once = True
                 self._summary_updated_at = time.time()
                 self._last_analyzed_seen = self._context_total_seen
-                await self._broadcast_summary()
-                await self._broadcast_hot_topics()
+            await self._broadcast_summary()
+            await self._broadcast_hot_topics()
 
     async def _flush(self):
         async with self._lock:
@@ -284,14 +299,15 @@ class Room:
                 print(f"[room {self.video_id}] stats 전송 실패: {e!r}")
 
     def _snapshot_message(self):
-        if self._current_summary is None:
-            return {"type": "summary", "available": False}
-        return {
-            "type": "summary",
-            "available": True,
-            "topic": self._current_summary["topic"],
-            "bullets": self._current_summary["bullets"],
-        }
+        if self._analyzed_once:
+            return {
+                "type": "summary",
+                "available": True,
+                "topic": self._current_summary["topic"],
+                "bullets": self._current_summary["bullets"],
+            }
+        phase = "analyzing" if self._analyzing else "insufficient"
+        return {"type": "summary", "available": False, "phase": phase}
 
     async def _broadcast_summary(self):
         msg = self._snapshot_message()
@@ -314,12 +330,16 @@ async def ws(sock: WebSocket):
         {"type": "analysis", "author": str, "text": str,
          "result": {"normal","profanity","political","sexual","spam"}}  # 각 0~100
     서버 → 클라이언트 (신규)
-        {"type": "summary", "available": bool, "topic"?: str, "bullets"?: [str, ...]}
-        {"type": "hot_topics", "available": bool, "topics"?: [{"topic": str, "count": int}, ...]}
-        # 방송요약과 핫토픽은 한 번의 분석에서 같이 나온다: 채팅이 MIN_CHAT_FOR_ANALYSIS개
-        # 모이면 접속 직후 첫 분석이 빠르게 뜨고, 이후 CHAT_SUMMARY_INTERVAL_SEC(3분)마다
-        # 그 사이 새 채팅이 MIN_CHAT_FOR_ANALYSIS개 이상 쌓였으면 서버가 알아서 다시
-        # push한다 — 클라이언트가 새로고침을 요청하는 프로토콜은 없다.
+        {"type": "summary", "available": bool, "phase"?: "insufficient"|"analyzing", "topic"?: str, "bullets"?: [str, ...]}
+        {"type": "hot_topics", "available": bool, "phase"?: "insufficient"|"analyzing", "topics"?: [{"topic": str, "count": int}, ...]}
+        # 방송요약과 핫토픽은 한 번의 분석에서 같이 나온다. 첫 분석 전(available:false)엔
+        # phase로 "채팅 부족(insufficient)"과 "LLM 호출 중(analyzing)"을 구분해서 보내고,
+        # 한 번이라도 분석에 성공하면 그 뒤로는 영구히 available:true + 최신 결과만 보낸다
+        # (그 뒤로 phase는 안 보냄 — 재분석 중에도 기존 결과를 그대로 보여주면 되니까).
+        # 채팅이 MIN_CHAT_FOR_ANALYSIS개 모이면 접속 직후 첫 분석이 빠르게 뜨고, 이후
+        # CHAT_SUMMARY_INTERVAL_SEC(3분)마다 그 사이 새 채팅이 MIN_CHAT_FOR_ANALYSIS개
+        # 이상 쌓였으면 서버가 알아서 다시 push한다 — 클라이언트가 새로고침을 요청하는
+        # 프로토콜은 없다.
         {"type": "mood", "percentages"?: {...}, "languages"?: {...}}
         # 집계는 채팅마다 하지만 push는 STATS_BROADCAST_SEC(약 7초)마다 한 번, 접속 시 1회 추가 전송
     """

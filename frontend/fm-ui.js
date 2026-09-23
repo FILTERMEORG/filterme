@@ -542,6 +542,7 @@ const STYLE = `
   .fm-mgr-tab.active{color:#fff;border-bottom-color:#7F77DD;}
   .fm-mgr-body{padding:12px 14px;max-height:280px;overflow-y:auto;}
   .fm-mgr-empty{font-size:12px;color:var(--fm-text-secondary);text-align:center;padding:20px 0;}
+  .fm-mgr-empty-sub{font-size:11px;opacity:.7;margin-top:4px;}
   .fm-mgr-analyzing{display:flex;flex-direction:column;align-items:center;gap:10px;}
   .fm-mgr-analyzing-dots{display:flex;gap:5px;}
   .fm-mgr-analyzing-dots span{

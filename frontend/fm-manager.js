@@ -60,7 +60,7 @@ function renderManagerBody() {
   }
 }
 
-// "분석 중" 느낌을 주는 애니메이션 점 3개 + 문구 — 정적인 빈 상태 대신 사용
+// "분석 중" 느낌을 주는 애니메이션 점 3개 + 문구 — LLM 호출이 실제로 진행 중일 때(phase:"analyzing")만 사용
 function _analyzingHtml(label) {
   return `<div class="fm-mgr-empty fm-mgr-analyzing">
     <div class="fm-mgr-analyzing-dots"><span></span><span></span><span></span></div>
@@ -68,21 +68,33 @@ function _analyzingHtml(label) {
   </div>`;
 }
 
+// 첫 분석 전, 아직 재료(채팅)가 부족할 때 — 애니메이션 없이 정적으로, "곧 시작됨"을 알림
+function _insufficientHtml() {
+  return `<div class="fm-mgr-empty">
+    <div>${t('mgr_insufficient_title')}</div>
+    <div class="fm-mgr-empty-sub">${t('mgr_insufficient_sub')}</div>
+  </div>`;
+}
+
+// 첫 분석 전(available:false) 공용 처리 — phase가 analyzing이면 애니메이션, 아니면 "채팅 부족" 안내
+function _pendingHtml(payload, analyzingLabel) {
+  return payload && payload.phase === 'analyzing' ? _analyzingHtml(analyzingLabel) : _insufficientHtml();
+}
+
 function renderRecentTab(payload) {
-  const available = !!payload && payload.available !== false;
-  const bullets = available ? (payload.bullets || []).map((b) => `<div class="fm-mgr-bullet">· ${b}</div>`).join('') : '';
-  const topic = available ? (payload.topic || '') : '';
+  if (!payload || payload.available !== true) return _pendingHtml(payload, t('mgr_empty_recent'));
+  const bullets = (payload.bullets || []).map((b) => `<div class="fm-mgr-bullet">· ${b}</div>`).join('');
   return `
     <div class="fm-mgr-status">${t('mgr_topic_label')}</div>
-    <div class="fm-mgr-topic">${topic}</div>
+    <div class="fm-mgr-topic">${payload.topic || ''}</div>
     <div class="fm-mgr-status fm-mgr-bullets-label">${t('mgr_bullets_label')}</div>
     ${bullets}
     <div class="fm-mgr-footer">${t('mgr_footer_note')}</div>`;
 }
 
 function renderHotTopicTab(payload) {
-  const topics = (payload && payload.available !== false) ? (payload.topics || []) : [];
-  const rows = topics.map((tp, i) => `
+  if (!payload || payload.available !== true) return _pendingHtml(payload, t('mgr_empty_hottopic'));
+  const rows = (payload.topics || []).map((tp, i) => `
     <div class="fm-mgr-topic-row">
       <span class="fm-mgr-topic-rank">${i + 1}</span>
       <span class="fm-mgr-topic-name">${tp.topic}</span>
