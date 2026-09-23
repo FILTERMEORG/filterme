@@ -121,7 +121,7 @@ function _renderStackBar(pct, entries) {
 }
 
 function renderMoodTab(pct, langPct) {
-  if (!pct && !langPct) return _analyzingHtml(t('mgr_empty_mood'));
+  if (!pct && !langPct) return _insufficientHtml();
   const cats = [
     ['normal', t('mgr_cat_normal'), '#1D9E75'], ['profanity', t('mgr_cat_profanity'), '#D85A30'],
     ['spam', t('mgr_cat_spam'), '#BA7517'], ['sexual', t('mgr_cat_sexual'), '#D4537E'], ['political', t('mgr_cat_political'), '#7F77DD']
