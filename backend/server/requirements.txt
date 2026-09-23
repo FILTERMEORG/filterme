@@ -4,6 +4,3 @@ uvicorn[standard]==0.39.0
 websockets==15.0.1
 httpx==0.28.1
 python-dotenv==1.2.1
-grpcio==1.80.0
-protobuf==6.33.6
-google-api-python-client==2.198.0

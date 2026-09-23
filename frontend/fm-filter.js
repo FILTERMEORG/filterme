@@ -114,6 +114,18 @@ function reclassifyAllVisible() {
   container.childNodes.forEach((node) => applyFilterToNode(node));
 }
 
+// 새로 관찰된 채팅 하나를 서버로 올린다 — main.py가 YouTube API 없이 방송요약/핫토픽
+// 재료를 모으는 유일한 경로(fm-socket.js의 sendToServer). 여러 시청자가 같은 채팅을
+// 각자 올려도 서버가 (작성자, 텍스트) 기준으로 중복 제거하므로 여기선 그냥 보내기만 한다.
+function _pushLiveChatToServer(node) {
+  const parsed = extractMessage(node);
+  if (!parsed) return;
+  const { authorEl, messageEl } = parsed;
+  const text = node.dataset.fmOrigText || messageEl.textContent || '';
+  if (!text.trim()) return;
+  sendToServer({ type: 'chat', author: authorEl ? authorEl.textContent : '', text });
+}
+
 function observeChat() {
   const container = findItemsContainer();
   if (!container) {
@@ -121,13 +133,15 @@ function observeChat() {
     return;
   }
 
-  // 이미 떠 있던 메시지도 한 번 처리
+  // 이미 떠 있던 메시지도 한 번 처리 (필터만 — 서버 전송은 안 함, 그건 backfill의 역할)
   container.childNodes.forEach((node) => applyFilterToNode(node));
 
   const observer = new MutationObserver((mutations) => {
     mutations.forEach((m) => {
       m.addedNodes.forEach((node) => {
-        if (node.nodeType === 1) applyFilterToNode(node);
+        if (node.nodeType !== 1) return;
+        applyFilterToNode(node);
+        _pushLiveChatToServer(node); // 진짜 신규 메시지만 서버로 push
       });
     });
   });

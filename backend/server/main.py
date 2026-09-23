@@ -1,18 +1,19 @@
-"""FastAPI 서버 진입점 — YouTube 라이브 채팅 수신 → 분석 → 확장으로 broadcast.
+"""FastAPI 서버 진입점 — 확장이 DOM에서 관찰한 YouTube 라이브 채팅을 받아 분석 → broadcast.
 
 전체 흐름
     확장(content.js) --WS accept--> ws()
     ws() 가 videoId 로 Room 을 찾거나 새로 만듦
-    Room.run() 이 youtube_stream.stream_chat() 으로 gRPC streamList 연결을 열고
-    들어오는 채팅을 버퍼에 쌓았다가(_recv) FLUSH_INTERVAL 마다(_flush)
-    analyzer.analyze_batch() 로 일괄 분석 → 같은 Room 을 보는 모든 클라이언트에 전송
+    확장이 DOM(MutationObserver)으로 관찰한 채팅을 {"type":"chat", ...} 로 계속 올려주면
+    Room._ingest_live_chat() 이 중복 제거 후 버퍼에 쌓았다가(_recv 자리를 대신함)
+    FLUSH_INTERVAL 마다(_flush) analyzer.analyze_batch() 로 일괄 분석
+    → 같은 Room 을 보는 모든 클라이언트에 전송
 
 핵심 설계: 같은 방송(videoId)을 보는 시청자가 몇 명이든 Room 은 하나,
-streamList 연결도 하나, 분석도 채팅당 1번만 한다 (fan-out 은 마지막에 broadcast 로).
-그래서 비용/할당량이 "동시 시청자 수"가 아니라 "동시에 필터링 중인 방송 수"에 비례한다.
+분석도 채팅당 1번만 한다 (fan-out 은 마지막에 broadcast 로). 여러 시청자가 같은 채팅을
+각자 DOM에서 중복으로 올려도 Room이 (작성자, 텍스트) 기준으로 걸러낸다.
+YouTube API(REST/gRPC)를 전혀 쓰지 않아서 쿼터 개념 자체가 없다.
 
-이 파일이 하지 않는 것: 실제 필터 판정 로직(analyzer.py), YouTube gRPC 통신 세부사항
-(youtube_stream.py), REST 로 videoId → liveChatId 조회(youtube.py).
+이 파일이 하지 않는 것: 실제 필터 판정 로직(analyzer.py).
 """
 import re
 import time
@@ -23,8 +24,6 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from analyzer import analyze_batch
 from summarizer import summarize_recent
-from youtube import get_live_chat_id
-from youtube_stream import stream_chat
 
 app = FastAPI()
 
@@ -37,6 +36,7 @@ INPUT_MAX = 200
 
 FLUSH_INTERVAL = 1.2   # 초. 이 주기로 모아서 배치 분석
 BUF_CAP = 500          # 버퍼 상한 (분석이 느릴 때 무한 증가 방지)
+LIVE_DEDUP_CAP = 2000  # 여러 시청자가 같은 채팅을 중복으로 올리는 걸 걸러내는 캐시 상한
 CHAT_SUMMARY_INTERVAL_SEC = 180  # 방송요약+핫토픽 분석을 이 주기(3분)마다 확인
 MIN_CHAT_FOR_ANALYSIS = 5   # 첫 분석 시도 최소 채팅 수 + 재확인 시 "새로 쌓인 채팅" 최소 개수로도 재사용
 KICKOFF_RETRY_SEC = 20      # 첫 분석 재료가 아직 부족하면 이 간격으로 재시도(성공하면 루프 종료)
@@ -85,7 +85,7 @@ def health():
 class Room:
     """방송(videoId) 하나를 대표하는 방. 이 방송을 보는 모든 WebSocket 클라이언트를 묶는다.
 
-    생명주기: 첫 시청자 접속 시 생성 → run() 이 gRPC 스트림을 열고 계속 돎 →
+    생명주기: 첫 시청자 접속 시 생성 → run() 이 백그라운드 루프들을 돌림 →
     마지막 시청자가 나가면 30초 유예(새로고침 대비) 후 정리(ws() 의 finally 블록 참고).
     """
 
@@ -96,6 +96,10 @@ class Room:
         self._buf = []          # [(author, text)]
         self._lock = asyncio.Lock()
         self._recent = collections.deque(maxlen=60)   # [(author, dup_key)] 최근 도배 판정용
+
+        self._seen_live_keys = set()   # (author, dup_key) 중복 제거용 — 여러 시청자가 같은 채팅을 올려도 1번만 처리
+        self._seen_live_order = collections.deque()  # 위 set에서 오래된 것부터 빼기 위한 순서 기록 — maxlen을 안 쓰는 이유는
+        # deque 자체 maxlen으로 자동 제거하면 밀려난 키가 set에는 안 지워져서 set만 무한정 커지기 때문(아래에서 둘을 같이 관리)
 
         self._context_texts = collections.deque(maxlen=300)  # 채팅 모더레이션용 + 방송요약/핫토픽 공용 재료
         self._context_total_seen = 0     # 누적 수신 채팅 수(절대 안 줄어듦) — "그 사이 새로 늘었는지" 판단용
@@ -115,44 +119,45 @@ class Room:
         self._lang_total = 0
 
     async def run(self):
-        # 방송요약/채팅분위기/핫토픽 전부 채팅(gRPC streamList)에서 나오는 재료라,
-        # 채팅 조회 자체가 실패하면 이 방은 할 수 있는 게 없다(backfill·키워드 필터만 남음).
-        try:
-            chat_id = await asyncio.to_thread(get_live_chat_id, self.video_id)
-        except Exception as e:
-            print(f"[room {self.video_id}] chat_id 실패(스트림 없음): {e}")
-            return
-
-        recv = asyncio.create_task(self._recv(chat_id))
         flush = asyncio.create_task(self._flush_loop())
         stats = asyncio.create_task(self._stats_loop())
         analyze = asyncio.create_task(self._analyze_loop())
         kickoff = asyncio.create_task(self._kickoff_analysis_loop())
         try:
-            await asyncio.gather(recv, flush, stats, analyze, kickoff)
+            await asyncio.gather(flush, stats, analyze, kickoff)
         finally:
-            recv.cancel()
             flush.cancel()
             stats.cancel()
             analyze.cancel()
             kickoff.cancel()
 
     def _ingest_context(self, text):
-        """방송요약/핫토픽 공용 재료 버퍼에 채팅 하나를 넣는다. 실시간 수신(_recv)과
+        """방송요약/핫토픽 공용 재료 버퍼에 채팅 하나를 넣는다. 실시간 수신(_ingest_live_chat)과
         backfill(ws()) 양쪽에서 같이 쓴다."""
         self._context_texts.append(text)
         self._context_total_seen += 1
 
-    async def _recv(self, chat_id):
-        async for author, text in stream_chat(chat_id):
-            if not text:
-                continue
-            trimmed = text[:INPUT_MAX]
-            self._buf.append((author, trimmed))
-            if len(self._buf) > BUF_CAP:
-                self._buf = self._buf[-BUF_CAP:]
+    def _ingest_live_chat(self, author, text):
+        """확장이 DOM에서 관찰해 WS로 올려준 실시간 채팅 하나를 받는다(과거 _recv 자리).
+        같은 방송을 보는 시청자 여러 명이 각자 DOM에서 같은 채팅을 관찰해서 중복으로
+        올릴 수 있으므로, (작성자, 정규화 텍스트) 기준으로 이미 처리한 건 무시한다."""
+        if not text:
+            return
+        trimmed = text[:INPUT_MAX]
+        key = (author, _dup_key(trimmed))
+        if key in self._seen_live_keys:
+            return
+        self._seen_live_keys.add(key)
+        self._seen_live_order.append(key)
+        if len(self._seen_live_order) > LIVE_DEDUP_CAP:
+            old = self._seen_live_order.popleft()
+            self._seen_live_keys.discard(old)
 
-            self._ingest_context(trimmed)
+        self._buf.append((author, trimmed))
+        if len(self._buf) > BUF_CAP:
+            self._buf = self._buf[-BUF_CAP:]
+
+        self._ingest_context(trimmed)
 
     async def _flush_loop(self):
         while True:
@@ -331,6 +336,11 @@ async def ws(sock: WebSocket):
         {"videoId": "<11자리 유튜브 videoId>"}
     클라이언트 → 서버 (이후, 선택, 여러 번 가능)
         {"type": "backfill", "texts": ["연결 전부터 화면에 있던 채팅", ...]}
+        # 접속 시 1회, 그 전부터 화면에 있던 채팅 캐치업용
+        {"type": "chat", "author": str, "text": str}
+        # 확장이 DOM(MutationObserver)에서 새 채팅을 감지할 때마다 계속 보냄 — 서버가
+        # YouTube API 없이 채팅을 받는 유일한 경로. 여러 시청자가 같은 채팅을 각자
+        # 보내도 서버가 (작성자, 텍스트) 기준으로 중복 제거한다.
     서버 → 클라이언트 (실시간 채팅 + backfill 응답 공통)
         {"type": "analysis", "author": str, "text": str,
          "result": {"normal","profanity","political","sexual","spam"}}  # 각 0~100
@@ -403,6 +413,13 @@ async def ws(sock: WebSocket):
                         "text": text,
                         "result": result,
                     })
+            elif isinstance(data, dict) and data.get("type") == "chat":
+                text = str(data.get("text") or "")[:INPUT_MAX]
+                author = str(data.get("author") or "")
+                if text:
+                    # _flush_loop이 이미 FLUSH_INTERVAL마다 self._buf를 비우고 분석+broadcast
+                    # 하므로, 여기선 버퍼에 넣기만 하면 됨(과거 _recv가 하던 일과 동일).
+                    room._ingest_live_chat(author, text)
     except WebSocketDisconnect:
         pass  # 정상 종료(새로고침/탭 닫기 등) — 로그 안 남김
     except Exception as e:
