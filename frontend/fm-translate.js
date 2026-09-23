@@ -195,18 +195,25 @@ function applyTranslationDisplay(node, messageEl, extraEl) {
   renderTrView(node, messageEl, card);
 }
 
-// 기본 노출은 번역문, 토글 시 원문 — messageEl과 카드를 서로 배타적으로 표시
+// 기본 노출은 번역문, 토글 시 원문 — messageEl과 카드의 번역 내용을 서로 배타적으로 표시.
+// 카드 전체를 숨기지 않고 언어뱃지/번역텍스트만 숨긴다 — 카드를 통째로 숨기면 그 안에
+// 있는 토글 버튼도 같이 사라져서 다시 번역문으로 못 돌아가는 버그가 있었음.
 function renderTrView(node, messageEl, card) {
   const view = node.dataset.fmTrView || 'translated';
   const toggle = card.querySelector('.fm-tr-toggle');
+  const langEl = card.querySelector('.fm-tr-lang');
+  const textEl = card.querySelector('.fm-tr-text');
+  const to = (settings && settings.translateRecvTo) || '';
   if (view === 'translated') {
     messageEl.style.display = 'none';
-    card.style.display = '';
+    langEl.style.display = '';
+    textEl.style.display = '';
     toggle.textContent = t('view_original');
   } else {
     messageEl.style.display = '';
-    card.style.display = 'none';
-    toggle.textContent = t('view_translated');
+    langEl.style.display = 'none';
+    textEl.style.display = 'none';
+    toggle.textContent = t('view_translated_to', { lang: t('lang_name_' + to) });
   }
 }
 
