@@ -110,6 +110,7 @@ class Room:
         self._summary_lock = asyncio.Lock()  # 접속-즉시 트리거와 주기 갱신이 동시에 겹치지 않게
         self._analyzed_once = False   # 첫 분석이 한 번이라도 성공했는지 — 한 번 True면 영구 True
         self._analyzing = False       # 지금 이 순간 LLM 호출이 진행 중인지(프론트 "분석 중" 표시용)
+        self._enough_chat_event = asyncio.Event()  # _context_texts가 첫 분석 문턱을 넘는 순간 kickoff 루프를 즉시 깨움
 
         self._hot_topics = None  # summarize_recent()가 같은 호출에서 같이 반환한 [{"topic","count"}, ...] — 최신 결과만 유지
 
@@ -136,6 +137,10 @@ class Room:
         backfill(ws()) 양쪽에서 같이 쓴다."""
         self._context_texts.append(text)
         self._context_total_seen += 1
+        if not self._analyzed_once and len(self._context_texts) >= MIN_CHAT_FOR_ANALYSIS:
+            # 첫 분석 문턱을 막 넘긴 순간 — _kickoff_analysis_loop이 20초 기다리지 않고
+            # 바로 깨어나게 함. 문턱 넘기 전까지 여러 번 호출돼도 Event.set()은 멱등이라 안전.
+            self._enough_chat_event.set()
 
     def _ingest_live_chat(self, author, text):
         """확장이 DOM에서 관찰해 WS로 올려준 실시간 채팅 하나를 받는다(과거 _recv 자리).
@@ -180,17 +185,22 @@ class Room:
 
     async def _kickoff_analysis_loop(self):
         """3분 주기(_analyze_loop)를 기다리지 않고 첫 분석(방송요약+핫토픽)을 최대한
-        빨리 보여주기 위한 보조 루프. 채팅이 MIN_CHAT_FOR_ANALYSIS개 모일 때까지
-        KICKOFF_RETRY_SEC(20초) 간격으로 계속 재시도하다가, 한 번 성공하면 스스로
-        끝난다 — 그 뒤로는 _analyze_loop이 이어받음. _context_texts가 시간 만료 없는
-        개수 기반(maxlen=300) 버퍼라 계속 재시도해도 "느린 채팅이 영원히 굶는" 문제가
-        없다."""
+        빨리 보여주기 위한 보조 루프. 채팅이 MIN_CHAT_FOR_ANALYSIS개 모이는 순간
+        (_ingest_context가 _enough_chat_event를 set) 즉시 깨어나서 시도하고, 혹시
+        이벤트를 놓쳐도 KICKOFF_RETRY_SEC(20초)마다 안전하게 한 번씩 재확인한다.
+        한 번 성공하면 스스로 끝나고 그 뒤로는 _analyze_loop이 이어받음. _context_texts
+        가 시간 만료 없는 개수 기반(maxlen=300) 버퍼라 계속 재시도해도 "느린 채팅이
+        영원히 굶는" 문제가 없다."""
         while self._current_summary is None:
             if len(self._context_texts) >= MIN_CHAT_FOR_ANALYSIS:
                 await self._update_analysis("\n".join(self._context_texts))
-            if self._current_summary is None:
-                await asyncio.sleep(KICKOFF_RETRY_SEC)
-        await self._update_analysis("\n".join(self._context_texts))
+                if self._current_summary is not None:
+                    break
+            self._enough_chat_event.clear()
+            try:
+                await asyncio.wait_for(self._enough_chat_event.wait(), timeout=KICKOFF_RETRY_SEC)
+            except asyncio.TimeoutError:
+                pass
 
     def _hot_topics_message(self):
         if self._analyzed_once:

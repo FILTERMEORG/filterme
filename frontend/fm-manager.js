@@ -192,9 +192,31 @@ function wireManagerEvents() {
 }
 
 // fm-socket.js의 onmessage가 호출
+// "채팅 부족" 상태만 이만큼 잠깐 들고 있다가, 그 사이 더 나은 상태(분석중/완료)가 오면
+// 취소하고 그걸로 바로 넘어간다 — 접속 직후 "부족"이 잠깐 반짝였다 사라지는 깜빡임 방지.
+const INSUFFICIENT_HOLD_MS = 1200;
+const _pendingHold = {}; // 'summary'|'hotTopics' -> setTimeout id
+
+function _applyManagerPayload(key, m) {
+  if (_pendingHold[key]) {
+    clearTimeout(_pendingHold[key]);
+    delete _pendingHold[key];
+  }
+  if (m && m.available === false && m.phase === 'insufficient') {
+    _pendingHold[key] = setTimeout(() => {
+      delete _pendingHold[key];
+      _managerState[key] = m;
+      renderManagerBody();
+    }, INSUFFICIENT_HOLD_MS);
+    return;
+  }
+  _managerState[key] = m;
+  renderManagerBody();
+}
+
 function onManagerServerMessage(m) {
-  if (m.type === 'summary') { _managerState.summary = m; renderManagerBody(); }
-  else if (m.type === 'hot_topics') { _managerState.hotTopics = m; renderManagerBody(); }
+  if (m.type === 'summary') _applyManagerPayload('summary', m);
+  else if (m.type === 'hot_topics') _applyManagerPayload('hotTopics', m);
   else if (m.type === 'mood') {
     if (m.percentages) _managerState.mood = m.percentages;
     if (m.languages) _managerState.languages = m.languages;
