@@ -12,6 +12,33 @@ let _managerState = {
   languages: null       // 서버가 보낸 마지막 시청자 언어 percentages
 };
 
+// 서버는 항상 한국어로만 분석 결과를 만든다(요청 언어별로 LLM을 또 부르면 비용이 배로
+// 들어서). 그래서 방송요약/핫토픽 텍스트는 fm-translate.js의 온디바이스 Translator를
+// 그대로 재사용해 화면에서만 설정된 언어로 번역한다 — 채팅 번역과 같은 방식, 서버 비용 0원.
+const _trCache = new Map(); // `${to}::${원문}` -> 번역 결과(끝난 것만). 진행 중/실패는 키만 있고 값은 undefined.
+
+// 캐시에 번역 결과가 있으면 그걸, 없으면 원문을 반환하면서 백그라운드로 번역을 시작한다.
+// 번역이 끝나면 그 결과를 캐시에 넣고 패널을 다시 그려서(재호출 시 캐시 hit) 화면이 갱신된다.
+function _cachedTr(text) {
+  const to = (typeof settings !== 'undefined' && settings && settings.translateRecvTo) || '';
+  if (!to || to === 'ko' || !text) return text;
+  const key = to + '::' + text;
+  if (_trCache.has(key)) return _trCache.get(key) || text;
+  _trCache.set(key, undefined); // 중복 요청 방지용 in-flight 마킹
+  (async () => {
+    try {
+      const tr = await getTranslator('ko', to); // fm-translate.js
+      const out = tr ? await tr.translate(text) : null;
+      if (out && out.trim()) _trCache.set(key, out);
+      else _trCache.delete(key); // 실패/불가 — 다음 렌더에서 재시도 가능하게
+    } catch (e) {
+      _trCache.delete(key);
+    }
+    renderManagerBody();
+  })();
+  return text;
+}
+
 function buildManagerPanel() {
   const el = document.createElement('div');
   el.className = 'fm-mgr-panel';
@@ -83,10 +110,10 @@ function _pendingHtml(payload, analyzingLabel) {
 
 function renderRecentTab(payload) {
   if (!payload || payload.available !== true) return _pendingHtml(payload, t('mgr_empty_recent'));
-  const bullets = (payload.bullets || []).map((b) => `<div class="fm-mgr-bullet">· ${b}</div>`).join('');
+  const bullets = (payload.bullets || []).map((b) => `<div class="fm-mgr-bullet">· ${_cachedTr(b)}</div>`).join('');
   return `
     <div class="fm-mgr-status">${t('mgr_topic_label')}</div>
-    <div class="fm-mgr-topic">${payload.topic || ''}</div>
+    <div class="fm-mgr-topic">${_cachedTr(payload.topic || '')}</div>
     <div class="fm-mgr-status fm-mgr-bullets-label">${t('mgr_bullets_label')}</div>
     ${bullets}
     <div class="fm-mgr-footer">${t('mgr_footer_note')}</div>`;
@@ -97,7 +124,7 @@ function renderHotTopicTab(payload) {
   const rows = (payload.topics || []).map((tp, i) => `
     <div class="fm-mgr-topic-row">
       <span class="fm-mgr-topic-rank">${i + 1}</span>
-      <span class="fm-mgr-topic-name">${tp.topic}</span>
+      <span class="fm-mgr-topic-name">${_cachedTr(tp.topic)}</span>
       <span class="fm-mgr-topic-count">${t('mgr_hottopic_count', { n: tp.count })}</span>
     </div>`).join('');
   return `<div class="fm-mgr-mood-note">${t('mgr_hottopic_note')}</div>${rows}`;
