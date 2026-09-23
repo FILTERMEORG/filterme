@@ -137,6 +137,12 @@ class Room:
             analyze.cancel()
             kickoff.cancel()
 
+    def _ingest_context(self, text):
+        """방송요약/핫토픽 공용 재료 버퍼에 채팅 하나를 넣는다. 실시간 수신(_recv)과
+        backfill(ws()) 양쪽에서 같이 쓴다."""
+        self._context_texts.append(text)
+        self._context_total_seen += 1
+
     async def _recv(self, chat_id):
         async for author, text in stream_chat(chat_id):
             if not text:
@@ -146,8 +152,7 @@ class Room:
             if len(self._buf) > BUF_CAP:
                 self._buf = self._buf[-BUF_CAP:]
 
-            self._context_texts.append(trimmed)
-            self._context_total_seen += 1
+            self._ingest_context(trimmed)
 
     async def _flush_loop(self):
         while True:
@@ -383,6 +388,13 @@ async def ws(sock: WebSocket):
                 texts = [str(t)[:INPUT_MAX] for t in (data.get("texts") or [])][:BACKFILL_MAX]
                 if not texts:
                     continue
+                if not room._analyzed_once:
+                    # 첫 분석 전에만 재료로 씀 — 접속 전부터 화면에 있던 채팅까지 반영해서
+                    # 실시간 채팅이 쌓이길 기다리지 않고 더 빨리 첫 분석을 띄울 수 있다.
+                    # 이미 한 번 분석했으면 여러 명이 잇달아 접속할 때마다 겹치는 DOM
+                    # 스냅샷이 계속 섞여 들어가는 걸 막기 위해 더 이상 안 넣는다.
+                    for text in texts:
+                        room._ingest_context(text)
                 results = await analyze_batch(texts)
                 for text, result in zip(texts, results):
                     await sock.send_json({
