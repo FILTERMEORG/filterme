@@ -7,7 +7,7 @@ OUT="filterme-extension.zip"
 rm -rf .pack "$OUT"
 mkdir -p .pack
 
-cp manifest.json fm-core.js fm-filter.js fm-translate.js fm-socket.js fm-ui.js content.js popup.html popup.js popup.css .pack/
+cp manifest.json fm-core.js fm-i18n.js fm-filter.js fm-translate.js fm-manager.js fm-socket.js fm-ui.js content.js popup.html popup.js popup.css .pack/
 cp -R icons .pack/
 
 ( cd .pack && zip -rqX "../$OUT" . )
