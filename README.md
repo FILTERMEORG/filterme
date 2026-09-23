@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="/frontend/assets/readme/demo.gif" alt="FILTERME 핵심 기능 — 라이브 채팅 개인화 필터링" width="100%">
+<img src="/filterme/frontend/assets/demo.gif" alt="FILTERME 핵심 기능 — 라이브 채팅 개인화 필터링" width="100%">
 
 ### 보고 싶은 채팅만, 보이게 하세요.
 
