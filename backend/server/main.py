@@ -10,7 +10,7 @@
 
 핵심 설계: 같은 방송(videoId)을 보는 시청자가 몇 명이든 Room 은 하나,
 분석도 채팅당 1번만 한다 (fan-out 은 마지막에 broadcast 로). 여러 시청자가 같은 채팅을
-각자 DOM에서 중복으로 올려도 Room이 (작성자, 텍스트) 기준으로 걸러낸다.
+각자 DOM에서 중복으로 올려도 Room이 메시지 id(YouTube가 메시지마다 발급) 기준으로 걸러낸다.
 YouTube API(REST/gRPC)를 전혀 쓰지 않아서 쿼터 개념 자체가 없다.
 
 이 파일이 하지 않는 것: 실제 필터 판정 로직(analyzer.py).
@@ -36,7 +36,7 @@ INPUT_MAX = 200
 
 FLUSH_INTERVAL = 1.2   # 초. 이 주기로 모아서 배치 분석
 BUF_CAP = 500          # 버퍼 상한 (분석이 느릴 때 무한 증가 방지)
-LIVE_DEDUP_CAP = 2000  # 여러 시청자가 같은 채팅을 중복으로 올리는 걸 걸러내는 캐시 상한
+LIVE_DEDUP_CAP = 4000  # 여러 시청자가 같은 채팅을 중복으로 올리는 걸 걸러내는 캐시 상한(id 경로는 메시지당 키 2개)
 CHAT_SUMMARY_INTERVAL_SEC = 180  # 방송요약+핫토픽 분석을 이 주기(3분)마다 확인
 MIN_CHAT_FOR_ANALYSIS = 5   # 첫 분석 시도 최소 채팅 수 + 재확인 시 "새로 쌓인 채팅" 최소 개수로도 재사용
 KICKOFF_RETRY_SEC = 20      # 첫 분석 재료가 아직 부족하면 이 간격으로 재시도(성공하면 루프 종료)
@@ -93,11 +93,11 @@ class Room:
         self.video_id = video_id
         self.clients = set()
         self.task = None
-        self._buf = []          # [(author, text)]
+        self._buf = []          # [(msg_id, author, text)] — msg_id는 구버전 확장이면 ''
         self._lock = asyncio.Lock()
         self._recent = collections.deque(maxlen=60)   # [(author, dup_key)] 최근 도배 판정용
 
-        self._seen_live_keys = set()   # (author, dup_key) 중복 제거용 — 여러 시청자가 같은 채팅을 올려도 1번만 처리
+        self._seen_live_keys = set()   # ("id", msg_id) / ("at", author, dup_key) 중복 제거용 — 여러 시청자가 같은 채팅을 올려도 1번만 처리
         self._seen_live_order = collections.deque()  # 위 set에서 오래된 것부터 빼기 위한 순서 기록 — maxlen을 안 쓰는 이유는
         # deque 자체 maxlen으로 자동 제거하면 밀려난 키가 set에는 안 지워져서 set만 무한정 커지기 때문(아래에서 둘을 같이 관리)
 
@@ -142,23 +142,41 @@ class Room:
             # 바로 깨어나게 함. 문턱 넘기 전까지 여러 번 호출돼도 Event.set()은 멱등이라 안전.
             self._enough_chat_event.set()
 
-    def _ingest_live_chat(self, author, text):
-        """확장이 DOM에서 관찰해 WS로 올려준 실시간 채팅 하나를 받는다(과거 _recv 자리).
-        같은 방송을 보는 시청자 여러 명이 각자 DOM에서 같은 채팅을 관찰해서 중복으로
-        올릴 수 있으므로, (작성자, 정규화 텍스트) 기준으로 이미 처리한 건 무시한다."""
-        if not text:
-            return
-        trimmed = text[:INPUT_MAX]
-        key = (author, _dup_key(trimmed))
-        if key in self._seen_live_keys:
-            return
+    def _remember_live_key(self, key):
         self._seen_live_keys.add(key)
         self._seen_live_order.append(key)
         if len(self._seen_live_order) > LIVE_DEDUP_CAP:
             old = self._seen_live_order.popleft()
             self._seen_live_keys.discard(old)
 
-        self._buf.append((author, trimmed))
+    def _ingest_live_chat(self, author, text, msg_id=""):
+        """확장이 DOM에서 관찰해 WS로 올려준 실시간 채팅 하나를 받는다(과거 _recv 자리).
+        같은 방송을 보는 시청자 여러 명이 각자 DOM에서 같은 채팅을 관찰해서 중복으로
+        올릴 수 있으므로 이미 처리한 건 무시한다.
+
+        msg_id가 있으면 id로만 중복 제거한다 — 같은 사람이 같은 말을 반복해도 id가 달라서
+        살아남고, 그래야 _flush()의 반복 도배 판정이 동작한다. (작성자, 텍스트)로 거르면
+        반복 자체가 여기서 버려져 도배를 절대 못 잡는다.
+        msg_id가 없으면(1.0.2 이하 구버전 확장) 예전처럼 (작성자, 텍스트)로 거른다. id 경로도
+        ("at", ...) 키를 남겨서, 같은 방에 구버전·신버전이 섞여도 구버전 업로드가 신버전이
+        이미 올린 채팅을 또 분석하지 않게 한다."""
+        if not text:
+            return
+        trimmed = text[:INPUT_MAX]
+        at_key = ("at", author, _dup_key(trimmed))
+        if msg_id:
+            id_key = ("id", msg_id)
+            if id_key in self._seen_live_keys:
+                return
+            self._remember_live_key(id_key)
+            if at_key not in self._seen_live_keys:
+                self._remember_live_key(at_key)
+        else:
+            if at_key in self._seen_live_keys:
+                return
+            self._remember_live_key(at_key)
+
+        self._buf.append((msg_id, author, trimmed))
         if len(self._buf) > BUF_CAP:
             self._buf = self._buf[-BUF_CAP:]
 
@@ -247,17 +265,19 @@ class Room:
             self._buf = []
             if not self.clients:
                 return
-            texts = [t for _, t in batch]
+            texts = [t for _, _, t in batch]
             results = await analyze_batch(texts)
             cats = ("normal", "profanity", "political", "sexual", "spam")
-            for (author, text), result in zip(batch, results):
+            for (msg_id, author, text), result in zip(batch, results):
                 # 같은 작성자가 이미 보낸 것과 동일한 메시지 → 도배 (한 메시지 안 반복은 analyzer 가 처리)
+                # id 있는 채팅만 대상 — id 없는 구버전 업로드는 반복이 이미 중복 제거로 버려졌고,
+                # 섞인 방에서 같은 채팅이 두 경로로 들어오면 자기 자신과 비교해 오판할 수 있다.
                 key = _dup_key(text)
-                if key and any(a == author and k == key for a, k in self._recent):
-                    result["spam"] = max(result["spam"], 90)
-                    worst = max(result["profanity"], result["political"], result["sexual"], result["spam"])
-                    result["normal"] = max(0, 100 - worst)
-                if key:
+                if msg_id and key:
+                    if any(a == author and k == key for a, k in self._recent):
+                        result["spam"] = max(result["spam"], 90)
+                        worst = max(result["profanity"], result["political"], result["sexual"], result["spam"])
+                        result["normal"] = max(0, 100 - worst)
                     self._recent.append((author, key))
 
                 top_cat = max(cats, key=lambda c: result.get(c, 0))
@@ -268,7 +288,7 @@ class Room:
                 self._lang_counts[lang] += 1
                 self._lang_total += 1
 
-                msg = {"type": "analysis", "author": author, "text": text, "result": result}
+                msg = {"type": "analysis", "id": msg_id, "author": author, "text": text, "result": result}
                 for client in list(self.clients):
                     try:
                         await client.send_json(msg)
@@ -345,14 +365,16 @@ async def ws(sock: WebSocket):
     클라이언트 → 서버 (최초 1회, 필수)
         {"videoId": "<11자리 유튜브 videoId>"}
     클라이언트 → 서버 (이후, 선택, 여러 번 가능)
-        {"type": "backfill", "texts": ["연결 전부터 화면에 있던 채팅", ...]}
+        {"type": "backfill", "items": [{"id": str, "author": str, "text": str}, ...]}
         # 접속 시 1회, 그 전부터 화면에 있던 채팅 캐치업용
-        {"type": "chat", "author": str, "text": str}
+        # (구버전 확장은 {"type": "backfill", "texts": [str, ...]} — 계속 받는다)
+        {"type": "chat", "id": str, "author": str, "text": str}
         # 확장이 DOM(MutationObserver)에서 새 채팅을 감지할 때마다 계속 보냄 — 서버가
-        # YouTube API 없이 채팅을 받는 유일한 경로. 여러 시청자가 같은 채팅을 각자
-        # 보내도 서버가 (작성자, 텍스트) 기준으로 중복 제거한다.
+        # YouTube API 없이 채팅을 받는 유일한 경로. id는 DOM 노드 id(=YouTube 메시지 id)이고,
+        # 여러 시청자가 같은 채팅을 각자 보내도 서버가 id 기준으로 중복 제거한다.
+        # (구버전 확장은 id 없이 보냄 → (작성자, 텍스트) 기준으로 중복 제거)
     서버 → 클라이언트 (실시간 채팅 + backfill 응답 공통)
-        {"type": "analysis", "author": str, "text": str,
+        {"type": "analysis", "id": str, "author": str, "text": str,
          "result": {"normal","profanity","political","sexual","spam"}}  # 각 0~100
     서버 → 클라이언트 (신규)
         {"type": "summary", "available": bool, "phase"?: "insufficient"|"analyzing", "topic"?: str, "bullets"?: [str, ...]}
@@ -405,7 +427,15 @@ async def ws(sock: WebSocket):
         while True:
             data = await sock.receive_json()
             if isinstance(data, dict) and data.get("type") == "backfill":
-                texts = [str(t)[:INPUT_MAX] for t in (data.get("texts") or [])][:BACKFILL_MAX]
+                items = data.get("items")
+                if isinstance(items, list):
+                    items = [
+                        (str(it.get("id") or ""), str(it.get("author") or ""), str(it.get("text") or "")[:INPUT_MAX])
+                        for it in items[:BACKFILL_MAX] if isinstance(it, dict) and it.get("text")
+                    ]
+                else:  # 구버전 확장
+                    items = [("", "", str(t)[:INPUT_MAX]) for t in (data.get("texts") or [])][:BACKFILL_MAX]
+                texts = [t for _, _, t in items]
                 if not texts:
                     continue
                 if not room._analyzed_once:
@@ -416,20 +446,22 @@ async def ws(sock: WebSocket):
                     for text in texts:
                         room._ingest_context(text)
                 results = await analyze_batch(texts)
-                for text, result in zip(texts, results):
+                for (msg_id, author, text), result in zip(items, results):
                     await sock.send_json({
                         "type": "analysis",
-                        "author": "",
+                        "id": msg_id,
+                        "author": author,
                         "text": text,
                         "result": result,
                     })
             elif isinstance(data, dict) and data.get("type") == "chat":
                 text = str(data.get("text") or "")[:INPUT_MAX]
                 author = str(data.get("author") or "")
+                msg_id = str(data.get("id") or "")
                 if text:
                     # _flush_loop이 이미 FLUSH_INTERVAL마다 self._buf를 비우고 분석+broadcast
                     # 하므로, 여기선 버퍼에 넣기만 하면 됨(과거 _recv가 하던 일과 동일).
-                    room._ingest_live_chat(author, text)
+                    room._ingest_live_chat(author, text, msg_id)
     except WebSocketDisconnect:
         pass  # 정상 종료(새로고침/탭 닫기 등) — 로그 안 남김
     except Exception as e:

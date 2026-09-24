@@ -34,20 +34,24 @@ function connectBackend() {
       clearInterval(_connTimer);
       setConnState('connected');
       ws.send(JSON.stringify({ videoId }));
-      const texts = [];
+      const items = [];
       document.querySelectorAll('yt-live-chat-text-message-renderer').forEach((node) => {
-        const el = (node.shadowRoot || node).querySelector('#message');
+        const root = node.shadowRoot || node;
+        const el = root.querySelector('#message');
+        const authorEl = root.querySelector('#author-name');
         const tx = norm(el ? el.textContent : '');
-        if (tx) texts.push(tx);
+        if (tx) items.push({ id: node.id || '', author: authorEl ? authorEl.textContent : '', text: tx });
       });
-      if (texts.length) ws.send(JSON.stringify({ type: 'backfill', texts }));
+      if (items.length) ws.send(JSON.stringify({ type: 'backfill', items }));
     };
     ws.onmessage = (ev) => {
       let m;
       try { m = JSON.parse(ev.data); } catch (e) { return; }
       if (m.type === 'summary' || m.type === 'mood' || m.type === 'hot_topics') { onManagerServerMessage(m); return; } // fm-manager.js
       if (m.type !== 'analysis') return;
-      serverCat.set(norm(m.text), resultToCategory(m.result));
+      const cat = resultToCategory(m.result);
+      if (m.id) setServerCatById(m.id, cat); // fm-filter.js
+      serverCat.set(norm(m.text), cat);
       reclassifyAllVisible();
     };
     ws.onclose = () => {
