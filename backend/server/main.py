@@ -36,6 +36,7 @@ INPUT_MAX = 200
 
 FLUSH_INTERVAL = 1.2   # 초. 이 주기로 모아서 배치 분석
 BUF_CAP = 500          # 버퍼 상한 (분석이 느릴 때 무한 증가 방지)
+CONTEXT_DEDUP_CAP = 2000  # 요약 버퍼용 (작성자, 텍스트) 중복 기록 상한
 LIVE_DEDUP_CAP = 4000  # 여러 시청자가 같은 채팅을 중복으로 올리는 걸 걸러내는 캐시 상한(id 경로는 메시지당 키 2개)
 CHAT_SUMMARY_INTERVAL_SEC = 180  # 방송요약+핫토픽 분석을 이 주기(3분)마다 확인
 MIN_CHAT_FOR_ANALYSIS = 5   # 첫 분석 시도 최소 채팅 수 + 재확인 시 "새로 쌓인 채팅" 최소 개수로도 재사용
@@ -102,6 +103,10 @@ class Room:
         # deque 자체 maxlen으로 자동 제거하면 밀려난 키가 set에는 안 지워져서 set만 무한정 커지기 때문(아래에서 둘을 같이 관리)
 
         self._context_texts = collections.deque(maxlen=300)  # 채팅 모더레이션용 + 방송요약/핫토픽 공용 재료
+        # 요약 버퍼 전용 중복 기록 — 필터(_seen_live_keys, 메시지 id 기준)와 기준이 달라서 분리.
+        # (작성자, 텍스트) 기준이라 같은 사람의 도배 반복도, 여러 명이 backfill로 올린 같은 화면 채팅도 1번만 들어간다.
+        self._context_seen = set()
+        self._context_seen_order = collections.deque()
         self._context_total_seen = 0     # 누적 수신 채팅 수(절대 안 줄어듦) — "그 사이 새로 늘었는지" 판단용
         self._last_analyzed_seen = 0     # 마지막으로 분석이 실제 성공했을 때의 _context_total_seen 값
 
@@ -132,9 +137,19 @@ class Room:
             analyze.cancel()
             kickoff.cancel()
 
-    def _ingest_context(self, text):
+    def _ingest_context(self, text, author=""):
         """방송요약/핫토픽 공용 재료 버퍼에 채팅 하나를 넣는다. 실시간 수신(_ingest_live_chat)과
-        backfill(ws()) 양쪽에서 같이 쓴다."""
+        backfill(ws()) 양쪽에서 같이 쓴다. (작성자, 정규화 텍스트)가 이미 들어간 적 있으면 무시 —
+        도배 반복이 핫토픽을 점령하거나, 같은 화면 채팅 1개를 여러 명이 backfill해서
+        MIN_CHAT_FOR_ANALYSIS를 가짜로 채우는 걸 막는다."""
+        key = (author, _dup_key(text))
+        if key in self._context_seen:
+            return
+        self._context_seen.add(key)
+        self._context_seen_order.append(key)
+        if len(self._context_seen_order) > CONTEXT_DEDUP_CAP:
+            self._context_seen.discard(self._context_seen_order.popleft())
+
         self._context_texts.append(text)
         self._context_total_seen += 1
         if not self._analyzed_once and len(self._context_texts) >= MIN_CHAT_FOR_ANALYSIS:
@@ -180,7 +195,7 @@ class Room:
         if len(self._buf) > BUF_CAP:
             self._buf = self._buf[-BUF_CAP:]
 
-        self._ingest_context(trimmed)
+        self._ingest_context(trimmed, author)
 
     async def _flush_loop(self):
         while True:
@@ -443,8 +458,8 @@ async def ws(sock: WebSocket):
                     # 실시간 채팅이 쌓이길 기다리지 않고 더 빨리 첫 분석을 띄울 수 있다.
                     # 이미 한 번 분석했으면 여러 명이 잇달아 접속할 때마다 겹치는 DOM
                     # 스냅샷이 계속 섞여 들어가는 걸 막기 위해 더 이상 안 넣는다.
-                    for text in texts:
-                        room._ingest_context(text)
+                    for _, author, text in items:
+                        room._ingest_context(text, author)
                 results = await analyze_batch(texts)
                 for (msg_id, author, text), result in zip(items, results):
                     await sock.send_json({
