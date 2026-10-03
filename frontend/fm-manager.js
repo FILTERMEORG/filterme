@@ -15,12 +15,14 @@ let _managerState = {
 // 서버는 항상 한국어로만 분석 결과를 만든다(요청 언어별로 LLM을 또 부르면 비용이 배로
 // 들어서). 그래서 방송요약/핫토픽 텍스트는 fm-translate.js의 온디바이스 Translator를
 // 그대로 재사용해 화면에서만 설정된 언어로 번역한다 — 채팅 번역과 같은 방식, 서버 비용 0원.
+// 대상은 채팅 번역 on/off(translateRecvTo)가 아니라 국가 설정의 화면 언어(uiLang)를 따른다 —
+// 요약·핫토픽은 채팅이 아니라 패널 UI의 일부라서, 채팅 번역을 꺼도 내 언어로 보여야 한다.
 const _trCache = new Map(); // `${to}::${원문}` -> 번역 결과(끝난 것만). 진행 중/실패는 키만 있고 값은 undefined.
 
 // 캐시에 번역 결과가 있으면 그걸, 없으면 원문을 반환하면서 백그라운드로 번역을 시작한다.
 // 번역이 끝나면 그 결과를 캐시에 넣고 패널을 다시 그려서(재호출 시 캐시 hit) 화면이 갱신된다.
 function _cachedTr(text) {
-  const to = (typeof settings !== 'undefined' && settings && settings.translateRecvTo) || '';
+  const to = (typeof settings !== 'undefined' && settings && settings.uiLang) || '';
   if (!to || to === 'ko' || !text) return text;
   const key = to + '::' + text;
   if (_trCache.has(key)) return _trCache.get(key) || text;

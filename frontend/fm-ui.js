@@ -343,6 +343,8 @@ function wireEvents() {
   els.fmFab.addEventListener('click', () => {
     toggleManagerPanel(); // fm-manager.js
     warmupTranslators(settings.translateRecvTo, showTrStatus); // 제스처 보강
+    // 요약·핫토픽 번역(ko → 화면 언어)용 언어팩 — 채팅 번역을 한 번도 안 켠 사용자도 이 클릭에서 받게
+    if (settings.uiLang && settings.uiLang !== 'ko') getTranslator('ko', settings.uiLang); // fm-translate.js
   });
   if (els.fmGear) {
     els.fmGear.addEventListener('click', () => {
