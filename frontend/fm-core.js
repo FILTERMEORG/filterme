@@ -11,9 +11,9 @@ const STRIP_HEIGHT = 34; // fm-strip의 실제 높이(px). 레이아웃 보정�
 const SERVER_WS = 'wss://filterme.onrender.com/ws';
 
 const DEFAULTS = {
-  country: '', // '' = 아직 선택 안 함. 'KR'|'US'|'JP'|'CN'|'ES'|'RU'
+  country: '', // '' = 아직 선택 안 함. 'KR'|'US'|'JP'|'CN'|'ES'|'RU'|'IN'|'DE'
   uiLang: 'ko', // country로부터 파생되는 UI 언어. country 선택 전엔 'ko' 폴백
-  translateRecvTo: '', // '' = 끄기, 아니면 'ko'|'en'|'ja'|'zh'|'es'|'ru'
+  translateRecvTo: '', // '' = 끄기, 아니면 'ko'|'en'|'ja'|'zh'|'es'|'ru'|'hi'|'de'
   translateSendTo: 'en', // 송신 번역 대상 언어
   onboarded: false,
   filterEnabled: true,
@@ -22,13 +22,17 @@ const DEFAULTS = {
 };
 
 // 국가 선택(온보딩 0단계 / Settings 재선택) 공용 메타데이터
+// label에 언어명을 같이 적는다 — 국가가 아니라 원하는 화면 언어로 고를 수 있게
+// (예: 영어 UI를 원하는 인도 사용자는 'English'를 보고 US를 고르면 된다).
 const COUNTRY_META = {
-  KR: { lang: 'ko', flag: '🇰🇷', label: '대한민국' },
-  US: { lang: 'en', flag: '🇺🇸', label: 'United States' },
-  JP: { lang: 'ja', flag: '🇯🇵', label: '日本' },
-  CN: { lang: 'zh', flag: '🇨🇳', label: '中国' },
-  ES: { lang: 'es', flag: '🇪🇸', label: 'España' },
-  RU: { lang: 'ru', flag: '🇷🇺', label: 'Россия' }
+  KR: { lang: 'ko', flag: '🇰🇷', label: '대한민국 · 한국어' },
+  US: { lang: 'en', flag: '🇺🇸', label: 'United States · English' },
+  JP: { lang: 'ja', flag: '🇯🇵', label: '日本 · 日本語' },
+  CN: { lang: 'zh', flag: '🇨🇳', label: '中国 · 中文' },
+  ES: { lang: 'es', flag: '🇪🇸', label: 'España · Español' },
+  RU: { lang: 'ru', flag: '🇷🇺', label: 'Россия · Русский' },
+  IN: { lang: 'hi', flag: '🇮🇳', label: 'भारत · हिन्दी' },
+  DE: { lang: 'de', flag: '🇩🇪', label: 'Deutschland · Deutsch' }
 };
 
 // 국가 선택 시 UI 언어 + 송신 번역 기본 언어를 한 번에 저장 (최초 온보딩/Settings 재선택 공용)
@@ -68,10 +72,12 @@ const LANG_META = {
   ja: { short: 'JA', label: '日本語' },
   zh: { short: 'ZH', label: '中文' },
   es: { short: 'ES', label: 'Español' },
-  ru: { short: 'RU', label: 'Русский' }
+  ru: { short: 'RU', label: 'Русский' },
+  hi: { short: 'HI', label: 'हिन्दी' },
+  de: { short: 'DE', label: 'Deutsch' }
 };
 // [3] 입력창 상대 언어(번역 대상) 목록 — 'ko'는 번역 없이 원문 그대로 전송(되돌리기용)
-const SEND_LANG_CODES = ['ko', 'en', 'ja', 'zh', 'es', 'ru'];
+const SEND_LANG_CODES = ['ko', 'en', 'ja', 'zh', 'es', 'ru', 'hi', 'de'];
 
 // 채팅 텍스트 비교용 정규화(공백 정리). fm-filter.js classify(), fm-socket.js connectBackend() 양쪽에서 씀.
 const norm = (s) => (s || '').trim().replace(/\s+/g, ' ');

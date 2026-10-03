@@ -50,7 +50,7 @@ async function getTranslator(from, to, onProgress) {
 
 // 지금까지 화면에서 감지된 언어들 + 흔한 언어의 팩을 미리 받아둔다.
 // user activation(셀렉트 change / 버튼 클릭) 컨텍스트에서 호출해야 다운로드가 허용됨.
-// 'ko'는 항상 포함 — 대상 언어(to)가 국가별로 달라져도(en/ja/zh/es/ru) 실제 채팅 원문의
+// 'ko'는 항상 포함 — 대상 언어(to)가 국가별로 달라져도(en/ja/zh/es/ru/hi/de) 실제 채팅 원문의
 // 대다수는 한국어이므로, 소스 언어 후보에서 빠지면 안 됨.
 const WARMUP_LANGS = ['ko', 'en', 'es', 'ja', 'pt', 'zh'];
 function warmupTranslators(to, onProgress) {
